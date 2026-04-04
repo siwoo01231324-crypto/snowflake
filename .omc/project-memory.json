@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775291299128,
+  "projectRoot": "D:\\project\\Snowflake\\my-project\\.worktree\\000002-workflow-test",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts"
+    ],
+    "gitBranches": {
+      "defaultBranch": "master",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775291299087,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 3,
+      "lastAccessed": 1775291299088,
+      "keyFiles": [
+        "check_forbidden_files.py",
+        "check_invariants.py"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "",
+      "accessCount": 2,
+      "lastAccessed": 1775291399529,
+      "type": "directory"
+    },
+    {
+      "path": "docs\\work\\active\\000002-workflow-test\\00_issue.md",
+      "accessCount": 2,
+      "lastAccessed": 1775291408958,
+      "type": "file"
+    },
+    {
+      "path": ".claude\\commands\\remind-issue.md",
+      "accessCount": 1,
+      "lastAccessed": 1775291307447,
+      "type": "file"
+    },
+    {
+      "path": "docs\\work\\active\\000002-workflow-test\\01_plan.md",
+      "accessCount": 1,
+      "lastAccessed": 1775291360146,
+      "type": "file"
+    },
+    {
+      "path": ".claude\\commands\\finish-issue.md",
+      "accessCount": 1,
+      "lastAccessed": 1775291379031,
+      "type": "file"
+    },
+    {
+      "path": "docs\\work\\active\\.ai.md",
+      "accessCount": 1,
+      "lastAccessed": 1775291402301,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
