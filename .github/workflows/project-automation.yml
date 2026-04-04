@@ -17,14 +17,10 @@ jobs:
       - name: Add to project & set status
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          # ⚠️  설정 필요: GitHub → Settings → Developer Settings → Personal Access Tokens
-          # PROJECT_TOKEN 에 'project' 스코프가 있는 PAT 설정 필요
         run: |
           ISSUE_URL="${{ github.event.issue.html_url }}"
           EVENT="${{ github.event.action }}"
 
-          # ⚠️  설정 필요: 아래 값들을 프로젝트에 맞게 변경하세요
-          # PROJECT_NUMBER: GitHub Projects 탭에서 확인 (URL의 숫자)
           PROJECT_NUMBER="1"
           # OWNER: GitHub organization 또는 username
           OWNER="${{ github.repository_owner }}"
@@ -35,12 +31,10 @@ jobs:
             --url "$ISSUE_URL" \
             --format json | jq -r '.id')
 
-          # ⚠️  설정 필요: 아래 ID들은 프로젝트마다 다릅니다.
-          # 조회 방법: gh project field-list {PROJECT_NUMBER} --owner {OWNER} --format json
-          PROJECT_ID="YOUR_PROJECT_ID"           # PVT_xxx 형태
-          FIELD_ID="YOUR_STATUS_FIELD_ID"        # PVTSSF_xxx 형태
-          OPTION_BACKLOG="YOUR_BACKLOG_OPTION_ID"       # Backlog 상태 ID
-          OPTION_IN_PROGRESS="YOUR_IN_PROGRESS_OPTION_ID"  # In Progress 상태 ID
+          PROJECT_ID="PVT_kwHODnFVv84BTrWM"
+          FIELD_ID="PVTSSF_lAHODnFVv84BTrWMzhA4t3w"
+          OPTION_BACKLOG="1295f29e"
+          OPTION_IN_PROGRESS="c69c65df"
 
           if [ "$EVENT" = "opened" ]; then
             gh project item-edit \
@@ -72,10 +66,9 @@ jobs:
           PROJECT_NUMBER="1"
           OWNER="${{ github.repository_owner }}"
 
-          # ⚠️  설정 필요
-          PROJECT_ID="YOUR_PROJECT_ID"
-          FIELD_ID="YOUR_STATUS_FIELD_ID"
-          OPTION_IN_REVIEW="YOUR_IN_REVIEW_OPTION_ID"   # In Review 상태 ID
+          PROJECT_ID="PVT_kwHODnFVv84BTrWM"
+          FIELD_ID="PVTSSF_lAHODnFVv84BTrWMzhA4t3w"
+          OPTION_IN_REVIEW="af3ff4d3"
 
           # PR 본문에서 연결된 이슈 번호 추출 (Closes/Fixes/Resolves #N)
           ISSUE_NUMS=$(echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | grep -oE '[0-9]+')
