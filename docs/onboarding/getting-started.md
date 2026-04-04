@@ -51,7 +51,7 @@ bash setup.sh
 ```
 
 스크립트가 안내하는 대로:
-1. **프로젝트 이름** 입력 → `CLAUDE.md`, `AGENTS.md` 내 `{{PROJECT_NAME}}` 자동 치환
+1. **프로젝트 이름** 입력 → `CLAUDE.md`, `AGENTS.md` 내 `snowflake` 자동 치환
 2. 이후 수동 설정 항목 안내 출력
 
 ---

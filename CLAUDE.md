@@ -1,4 +1,4 @@
-# {{PROJECT_NAME}} — Claude Code 가이드
+# snowflake — Claude Code 가이드
 
 > 세션 시작 시 이 파일을 먼저 읽는다. 지도(map)다. 백과사전이 아니다.
 
