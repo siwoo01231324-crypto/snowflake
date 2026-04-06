@@ -28,7 +28,7 @@ git worktree list
 2. `gh issue view {번호} --json state` 로 상태 확인
 3. CLOSED 상태인 것만 정리 대상으로 분류
 
-정리 대상 목록을 출력하고 확인을 받는다. 확인 후 각 항목에 대해 2~6단계 실행.
+정리 대상 목록을 출력하고 확인을 받는다. 확인 후 각 항목에 대해 2~7단계 실행.
 
 ### 2. 서버 프로세스 종료
 
@@ -42,25 +42,45 @@ gh issue view {이슈번호} --json state,title
 
 이슈가 OPEN 상태이면 경고 출력 후 사용자 확인.
 
-### 4. Worktree 삭제
+### 4. 이슈 Close 및 Projects 상태 업데이트
+
+이슈가 OPEN 상태이면 닫는다:
+```
+gh issue close {이슈번호}
+```
+
+GitHub Projects에서 상태를 **Done**으로 이동한다:
+```
+# 프로젝트 아이템 ID 조회
+gh project item-list {프로젝트번호} --owner @me --format json
+
+# Status를 Done으로 변경 (Done 옵션 ID는 프로젝트마다 다름)
+gh project item-edit \
+  --id {ITEM_ID} \
+  --project-id {PROJECT_ID} \
+  --field-id {STATUS_FIELD_ID} \
+  --single-select-option-id {DONE_OPTION_ID}
+```
+
+### 5. Worktree 삭제
 
 ```
 git worktree remove --force {WORKTREE}
 ```
 
-### 5. 로컬 브랜치 삭제
+### 6. 로컬 브랜치 삭제
 
 ```
 git branch -D {브랜치명}
 ```
 
-### 6. 리모트 브랜치 삭제
+### 7. 리모트 브랜치 삭제
 
 ```
 git push origin --delete {브랜치명}
 ```
 
-### 7. 최종 상태 확인
+### 8. 최종 상태 확인
 
 ```
 git worktree list
