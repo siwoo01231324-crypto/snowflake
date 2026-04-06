@@ -44,6 +44,8 @@ gh issue view {이슈번호} --json state,title
 
 ### 4. 이슈 Close 및 Projects 상태 업데이트
 
+> **주의**: 이 단계를 절대 건너뛰지 않는다. `gh project item-list` 조회 시 반드시 프로젝트 번호를 명시해야 하며(`gh project list --owner @me`로 먼저 확인), 조회 결과가 비어도 파라미터 누락/오류를 먼저 점검한 뒤 재시도한다.
+
 이슈가 OPEN 상태이면 닫는다:
 ```
 gh issue close {이슈번호}
