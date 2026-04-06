@@ -27,6 +27,9 @@ playwright-report/
 coverage/
 .coverage
 
+# OMC 상태 (로컬 전용)
+.omc/
+
 # 워크트리 (git이 자동 관리)
 .worktree/
 
