@@ -8,27 +8,38 @@
 .env
 .env.*
 !.env.example
+.envrc
 
 # 의존성
 node_modules/
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
 
 # 빌드 결과물
 dist/
 build/
 .next/
 out/
+next-env.d.ts
 
 # 테스트 결과물
 test-results/
 playwright-report/
 coverage/
 .coverage
+**/tests/fixtures/**
 
-# OMC 상태 (로컬 전용)
+# 임시 파일
+temp/
+
+# 도구 상태 (로컬 전용)
 .omc/
+.mcp.json
+.claude/settings.local.json
 
 # 워크트리 (git이 자동 관리)
 .worktree/
@@ -40,3 +51,7 @@ Thumbs.db
 # IDE
 .idea/
 *.swp
+
+# 개인정보 (커밋 금지)
+mentor_mentee_summary.md
+docs/specs/**/designs/*.png
