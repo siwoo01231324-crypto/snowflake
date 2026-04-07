@@ -123,30 +123,63 @@ DIM_REGION (SPH M_SCCO_MST 기반, 서울 25개 구 467개 동)
 
 ### A1-2. V_BJD_DISTRICT_MAP — RICHGO BJD_CODE ↔ SPH DISTRICT_CODE 매핑 뷰
 
-RICHGO와 SPH 데이터를 동 단위로 연결하기 위한 코드 매핑 뷰. SPH M_SCCO_MST의 DISTRICT_CODE 앞 8자리와 RICHGO BJD_CODE 앞 8자리가 일치하는 방식으로 매핑.
+RICHGO와 SPH 데이터를 동 단위로 연결하기 위한 코드 매핑 뷰.
+
+**매핑 전략 (2단계)**:
+1. **동 단위** (BJD_CODE 끝 4자리 ≠ 0000): `LEFT(BJD_CODE, 8) = DISTRICT_CODE` — 행정동 직접 매핑
+2. **구 단위 fallback** (BJD_CODE 끝 4자리 = 0000): `LEFT(BJD_CODE, 5) = CITY_CODE` — 시군구 매핑
+
+**변경 이력 (2026-04-07, #20)**:
+- 초기 설계: 동 단위 단일 JOIN만 존재 → RICHGO 구 레벨 집계행 3개(중구/영등포구/서초구) 매핑 실패 (89.7%)
+- 원인: RICHGO에 BJD_CODE 끝 4자리가 `0000`인 시군구 레벨 집계행 존재. SPH는 동 단위(DISTRICT_CODE)만 보유하여 1:1 대응 불가
+- 해결: UNION ALL로 구 단위 fallback 추가 → `MATCH_LEVEL` 컬럼으로 동/구 구분 → **100% 커버리지 달성**
+- SD 필터 수정: `'서울특별시'` → RICHGO 실데이터 SD 값이 `'서울'`이었으므로, `V_RICHGO_MARKET_PRICE` 뷰 참조 + `RIGHT(BJD_CODE, 4) != '0000'` 필터로 대체
 
 ```sql
--- BJD_CODE(10자리) ↔ DISTRICT_CODE(8자리) 매핑 뷰
+-- BJD_CODE(10자리) ↔ DISTRICT_CODE(8자리) 매핑 뷰 (동 + 구 fallback)
 CREATE OR REPLACE VIEW MOVING_INTEL.ANALYTICS.V_BJD_DISTRICT_MAP AS
+-- 동 단위 매핑 (BJD_CODE 끝4자리 != 0000)
 SELECT
     m.PROVINCE_CODE,
     m.CITY_CODE,
     m.DISTRICT_CODE,
     m.DISTRICT_KOR_NAME,
     m.CITY_KOR_NAME,
-    -- RICHGO BJD_CODE 앞 8자리가 SPH DISTRICT_CODE와 대응
     LEFT(r.BJD_CODE, 8) AS BJD_CODE_8,
     r.BJD_CODE,
-    r.EMD AS RICHGO_EMD_NAME
+    r.EMD AS RICHGO_EMD_NAME,
+    'DONG' AS MATCH_LEVEL
 FROM SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
 JOIN (
     SELECT DISTINCT BJD_CODE, EMD
-    FROM KOREAN_POPULATION__APARTMENT_MARKET_PRICE_DATA.HACKATHON_2025Q2.REGION_APT_RICHGO_MARKET_PRICE_M_H
-    WHERE SD = '서울특별시'
-) r ON LEFT(r.BJD_CODE, 8) = m.DISTRICT_CODE;
+    FROM MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE
+    WHERE RIGHT(BJD_CODE, 4) != '0000'
+) r ON LEFT(r.BJD_CODE, 8) = m.DISTRICT_CODE
+
+UNION ALL
+
+-- 구 단위 fallback 매핑 (BJD_CODE 끝4자리 = 0000)
+SELECT DISTINCT
+    m.PROVINCE_CODE,
+    m.CITY_CODE,
+    NULL AS DISTRICT_CODE,
+    NULL AS DISTRICT_KOR_NAME,
+    m.CITY_KOR_NAME,
+    LEFT(r.BJD_CODE, 5) AS BJD_CODE_8,
+    r.BJD_CODE,
+    r.EMD AS RICHGO_EMD_NAME,
+    'GU' AS MATCH_LEVEL
+FROM SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
+JOIN (
+    SELECT DISTINCT BJD_CODE, EMD
+    FROM MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE
+    WHERE RIGHT(BJD_CODE, 4) = '0000'
+) r ON LEFT(r.BJD_CODE, 5) = m.CITY_CODE;
 ```
 
-> ⚠️ 코드 매핑 정합성은 실데이터로 검증 필요. 매핑 누락 행은 시군구(CITY_CODE) 단위로 fallback.
+> **컬럼 추가**: `MATCH_LEVEL` — `'DONG'`(동 단위) 또는 `'GU'`(구 단위 fallback). 소비자가 동 단위만 필요하면 `WHERE MATCH_LEVEL = 'DONG'`으로 필터.
+>
+> **검증 결과 (2026-04-07)**: 총 29개 BJD_CODE 중 동 26개 + 구 3개 = **100% 매핑**. 미매핑 0건.
 
 ### A1-3. FACT_HOUSING_PRICE — RICHGO 아파트 시세
 
