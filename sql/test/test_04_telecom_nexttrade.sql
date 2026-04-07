@@ -1,0 +1,34 @@
+-- ============================================================
+-- test_04_telecom_nexttrade.sql
+-- 아정당 + NextTrade 참조 뷰 6개 검증 쿼리 (이슈 #19 AC 검증)
+-- ============================================================
+
+-- TC-01: 핵심 뷰 V05 존재 + row count > 0
+SELECT COUNT(*) AS cnt FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL;
+-- EXPECTED: cnt > 0
+
+-- TC-02: V05 필수 컬럼 확인
+SELECT YEAR_MONTH, INSTALL_STATE, INSTALL_CITY, CONTRACT_COUNT, OPEN_COUNT, PAYEND_COUNT
+FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL LIMIT 1;
+-- EXPECTED: 6개 컬럼 모두 존재
+
+-- TC-03: V01 존재
+SELECT COUNT(*) AS cnt FROM MOVING_INTEL.ANALYTICS.V_TELECOM_CONTRACT_STATS;
+-- EXPECTED: cnt > 0
+
+-- TC-04: NextTrade 종목 참조 존재
+SELECT COUNT(*) AS cnt FROM MOVING_INTEL.ANALYTICS.V_NEXTTRADE_REFER;
+-- EXPECTED: cnt > 0
+
+-- TC-05: NextTrade 체결가 필수 컬럼
+SELECT DWDD, ISU_CD, TD_PRC, TRD_QTY, ACC_TRVAL
+FROM MOVING_INTEL.ANALYTICS.V_NEXTTRADE_PRICE LIMIT 1;
+-- EXPECTED: 5개 컬럼 존재
+
+-- TC-06: V02 번들 뷰 존재
+SELECT COUNT(*) AS cnt FROM MOVING_INTEL.ANALYTICS.V_TELECOM_BUNDLE;
+-- EXPECTED: cnt > 0
+
+-- TC-07: V03 퍼널 뷰 존재
+SELECT COUNT(*) AS cnt FROM MOVING_INTEL.ANALYTICS.V_TELECOM_FUNNEL;
+-- EXPECTED: cnt > 0
