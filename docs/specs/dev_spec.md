@@ -2691,6 +2691,112 @@ def get_seoul_geojson_with_demand(year_month):
 
 ---
 
+## D4. 프로젝트 디렉토리 구조
+
+> dev_spec Part A~D의 산출물을 매핑한 소스코드 디렉토리 구조. 모든 디렉토리에 `.ai.md` 필수.
+
+```
+snowflake/
+├── AGENTS.md                    레포 전체 목차
+├── CLAUDE.md                    불변식·규칙·작업 흐름
+├── README.md                    프로젝트 소개
+│
+├── sql/                         Snowflake SQL 스크립트 (Part A2, B3, B4)
+│   ├── ddl/                     DB·스키마·테이블 생성 DDL
+│   │   └── 001_create_database_schema.sql   (#16)
+│   ├── views/                   Marketplace 연동 뷰 생성 (A2-3)
+│   │   ├── 002_richgo_views.sql             RICHGO 뷰 3개
+│   │   ├── 003_sph_views.sql                SPH 뷰 3개
+│   │   ├── 004_telecom_views.sql            아정당 뷰 2개
+│   │   ├── 005_nexttrade_views.sql          NextTrade 뷰 1개
+│   │   └── 006_bjd_district_map.sql         BJD↔DISTRICT 매핑 뷰
+│   ├── udf/                     UDF·UDTF 정의 (B3)
+│   │   ├── predict_move_demand.sql          B3-1
+│   │   ├── calc_roi.sql                     B3-2
+│   │   └── get_segment_profile.sql          B3-3
+│   ├── cortex/                  Cortex AI Functions SQL (B4)
+│   │   └── cortex_ai_functions.sql          AI_COMPLETE, AI_CLASSIFY 등
+│   ├── validation/              데이터 검증 쿼리 (A2-3 #11)
+│   │   └── validate_all_views.sql
+│   └── test/                    AC 검증 테스트 쿼리
+│       └── test_01_db_schema.sql            (#16)
+│
+├── src/                         Python 소스 코드
+│   ├── pipeline/                Snowpark 전처리 파이프라인 (Part A3)
+│   │   ├── __init__.py
+│   │   ├── build_mart.py        build_integrated_mart() — A3-3
+│   │   ├── region_mapping.py    아정당↔SPH 텍스트 매핑 — A3-4
+│   │   └── time_series.py       시계열 월별 집계/정규화 — A3-5
+│   ├── features/                Feature Engineering (Part A4)
+│   │   ├── __init__.py
+│   │   ├── move_signal.py       MOVE_SIGNAL_INDEX — A4-1
+│   │   ├── lag_correlation.py   시차 상관분석 — A4-2
+│   │   ├── life_attractiveness.py  라이프스타일 매력도 — A4-3
+│   │   └── seasonal.py          계절성 피처 — A4-5
+│   ├── ml/                      ML 모델 학습·배포 (Part A5)
+│   │   ├── __init__.py
+│   │   ├── train.py             train_and_deploy() — A5-3
+│   │   └── evaluate.py          모델 평가 (MAPE 등)
+│   └── app/                     Streamlit 대시보드 (Part C)
+│       ├── app.py               앱 진입점 — C1
+│       ├── tabs/                탭별 모듈
+│       │   ├── heatmap.py       이사 수요 예측 히트맵 — C2
+│       │   ├── segment.py       세그먼트 분석 — C3
+│       │   ├── roi.py           ROI 계산기 — C4
+│       │   └── ai_query.py      AI 자연어 질의 (고도화) — C5
+│       ├── components/          재사용 컴포넌트
+│       │   ├── map_renderer.py  pydeck 지도 렌더링 — C6
+│       │   └── filters.py       공통 필터 위젯
+│       └── utils/               유틸리티
+│           ├── snowflake_conn.py  Snowflake 세션 관리
+│           └── constants.py       상수 (업종별 ROI 파라미터 등)
+│
+├── config/                      설정 파일
+│   └── semantic_model.yaml      Cortex Analyst 시맨틱 모델 — B5
+│
+├── tests/                       Python 테스트 (E2E 포함)
+│   ├── test_pipeline.py         전처리 파이프라인 테스트
+│   ├── test_features.py         Feature Engineering 테스트
+│   └── test_app.py              Streamlit 앱 테스트
+│
+├── docs/                        프로젝트 문서 (SOT)
+│   ├── specs/                   기능 명세 + AC
+│   ├── background/              배경 리서치
+│   ├── whitepaper/              백서
+│   ├── onboarding/              환경 설정·기여 가이드
+│   └── work/                    이슈별 작업 내역
+│       ├── active/              진행 중
+│       └── done/                완료
+│
+└── scripts/                     유틸리티 스크립트
+    ├── check_invariants.py      아키텍처 불변식 검증
+    └── check_forbidden_files.py 금지 파일 검사
+```
+
+### dev_spec 섹션 ↔ 디렉토리 매핑
+
+| dev_spec 섹션 | 디렉토리 | 핵심 산출물 |
+|--------------|----------|-----------|
+| A2-3 DDL/뷰 | `sql/ddl/`, `sql/views/` | CREATE DB/SCHEMA, 뷰 10개 |
+| A3 전처리 | `src/pipeline/` | build_integrated_mart() |
+| A4 Feature Engineering | `src/features/` | MOVE_SIGNAL_INDEX, lag 분석 |
+| A5 ML 모델 | `src/ml/` | train_and_deploy(), XGBRegressor |
+| B3 UDF/UDTF | `sql/udf/` | PREDICT_MOVE_DEMAND 등 3개 |
+| B4 Cortex AI | `sql/cortex/` | AI_COMPLETE, AI_CLASSIFY 등 |
+| B5 Cortex Analyst | `config/` | semantic_model.yaml |
+| C1~C5 Streamlit | `src/app/` | app.py + 탭 4개 |
+| C6 GIS | `src/app/components/` | map_renderer.py |
+| D1 테스트 | `tests/`, `sql/test/` | E2E 통합 테스트 |
+
+### 번호 규칙
+
+- **SQL DDL**: `NNN_설명.sql` (001부터 이슈 순서대로)
+- **SQL 뷰**: `NNN_데이터셋_views.sql` (002~006, 이슈별)
+- **SQL UDF**: `함수명.sql` (함수명이 곧 파일명)
+- **Python**: 모듈명은 snake_case, 기능 단위 분리
+
+---
+
 ## 출처
 
 - 무빙 인텔리전스 백서 v1.0 (`docs/whitepaper/v1.0-moving-intelligence.md`) — 섹션 3.4 시스템 아키텍처, 섹션 6 MVP & 로드맵
