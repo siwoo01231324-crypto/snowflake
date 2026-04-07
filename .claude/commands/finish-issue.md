@@ -104,9 +104,30 @@ gh pr create \
 Closes #{이슈번호}"
 ```
 
-### 13. 완료 안내
+### 13. Projects 상태 → In Review
+
+PR 생성 후 GitHub Projects 상태를 **In Review**로 변경한다.
+
+```
+# 프로젝트 번호 확인
+gh project list --owner @me
+
+# 프로젝트 아이템 ID 조회
+gh project item-list {프로젝트번호} --owner @me --format json
+# → 해당 이슈의 item ID 추출
+
+# Status를 In Review로 변경
+gh project item-edit \
+  --id {ITEM_ID} \
+  --project-id {PROJECT_ID} \
+  --field-id {STATUS_FIELD_ID} \
+  --single-select-option-id {IN_REVIEW_OPTION_ID}
+```
+
+### 14. 완료 안내
 
 ```
 ✓ PR 생성 완료: {PR URL}
+✓ Projects 상태: In Review
 PR 머지 후 /cleanup-issue {이슈번호} 을 실행하세요.
 ```

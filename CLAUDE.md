@@ -13,10 +13,15 @@
 > ⚠️ 프로젝트에 맞게 직접 정의하세요. `scripts/check_invariants.py` 와 연동됩니다.
 
 ```
-# 예시 — 프로젝트 특성에 맞게 수정/추가/삭제
-1. 예시: 인증 로직은 특정 레이어에서만 처리
-2. 예시: 외부 API 호출은 지정된 모듈에서만
-3. 예시: 테스트 없는 PR은 머지 금지
+1. Snowflake 연결 정보(account, password, token)를 소스코드에 하드코딩 금지
+   - UDF/UDTF → Snowflake SECRET 객체 사용
+   - Streamlit → st.connection() + secrets.toml (gitignore 대상)
+   - Python 스크립트 → 환경변수 또는 ~/.snowflake/connections.toml
+2. 실데이터 샘플을 코드·주석·커밋 메시지에 포함 금지
+   - 테스트에는 기대값(row count, 컬럼 존재 여부)만 기재
+   - 개인정보(이름, 전화번호, 주소) 절대 커밋 금지
+3. API 키·토큰이 git history에 유입되면 즉시 키 폐기 + 재발급
+   - secret-filter hook이 탐지하지만, 방어선은 커밋 전 확인이 우선
 ```
 
 ## 레포 규칙
