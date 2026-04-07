@@ -1,0 +1,34 @@
+-- ============================================================
+-- test_05_bjd_mapping.sql
+-- V_BJD_DISTRICT_MAP AC 검증 (이슈 #20)
+-- ============================================================
+
+-- TC-01: 매핑 뷰 존재 + row count
+SELECT COUNT(*) AS cnt FROM MOVING_INTEL.ANALYTICS.V_BJD_DISTRICT_MAP;
+-- EXPECTED: cnt > 0
+
+-- TC-02: 매핑 커버리지 확인 (RICHGO BJD_CODE 중 매핑 성공 비율)
+SELECT
+    COUNT(DISTINCT r.BJD_CODE) AS total_bjd,
+    COUNT(DISTINCT m.BJD_CODE) AS mapped_bjd,
+    ROUND(COUNT(DISTINCT m.BJD_CODE) / NULLIF(COUNT(DISTINCT r.BJD_CODE), 0) * 100, 1) AS coverage_pct
+FROM MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE r
+LEFT JOIN MOVING_INTEL.ANALYTICS.V_BJD_DISTRICT_MAP m
+    ON r.BJD_CODE = m.BJD_CODE;
+-- EXPECTED: coverage_pct >= 80
+
+-- TC-03: JOIN 결과 확인 (RICHGO 시세 + SPH 행정구역)
+SELECT r.SGG, r.EMD, r.MEME_PRICE_PER_SUPPLY_PYEONG, s.CITY_KOR_NAME
+FROM MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE r
+JOIN MOVING_INTEL.ANALYTICS.V_BJD_DISTRICT_MAP m
+    ON r.BJD_CODE = m.BJD_CODE
+JOIN MOVING_INTEL.ANALYTICS.V_SPH_REGION_MASTER s
+    ON m.CITY_CODE = s.CITY_CODE
+LIMIT 5;
+-- EXPECTED: 4개 컬럼 모두 값 존재, NULL 없음
+
+-- TC-04: 매핑 키 유니크 확인
+SELECT BJD_CODE_8, COUNT(*) AS cnt
+FROM MOVING_INTEL.ANALYTICS.V_BJD_DISTRICT_MAP
+GROUP BY 1 HAVING cnt > 1;
+-- EXPECTED: 0 rows (중복 없음)
