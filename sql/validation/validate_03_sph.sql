@@ -1,0 +1,43 @@
+-- ============================================================
+-- validate_03_sph.sql
+-- SPH 뷰 4개 데이터 정합성 검증
+-- 이슈: #18
+-- ============================================================
+
+-- 4개 뷰의 row count + 날짜 범위를 한번에 확인
+SELECT 'V_SPH_FLOATING_POP' AS view_name, COUNT(*) AS row_cnt,
+       TO_DATE(MIN(STANDARD_YEAR_MONTH), 'YYYYMM') AS min_date,
+       TO_DATE(MAX(STANDARD_YEAR_MONTH), 'YYYYMM') AS max_date
+FROM MOVING_INTEL.ANALYTICS.V_SPH_FLOATING_POP
+UNION ALL
+SELECT 'V_SPH_CARD_SALES', COUNT(*),
+       TO_DATE(MIN(STANDARD_YEAR_MONTH), 'YYYYMM'),
+       TO_DATE(MAX(STANDARD_YEAR_MONTH), 'YYYYMM')
+FROM MOVING_INTEL.ANALYTICS.V_SPH_CARD_SALES
+UNION ALL
+SELECT 'V_SPH_ASSET_INCOME', COUNT(*),
+       TO_DATE(MIN(STANDARD_YEAR_MONTH), 'YYYYMM'),
+       TO_DATE(MAX(STANDARD_YEAR_MONTH), 'YYYYMM')
+FROM MOVING_INTEL.ANALYTICS.V_SPH_ASSET_INCOME
+UNION ALL
+SELECT 'V_SPH_REGION_MASTER', COUNT(*), NULL, NULL
+FROM MOVING_INTEL.ANALYTICS.V_SPH_REGION_MASTER;
+
+-- 기대 결과:
+-- V_SPH_FLOATING_POP  | 2577120 | 2021-01-01 | 2025-12-01
+-- V_SPH_CARD_SALES    | 6208957 | ...        | ...
+-- V_SPH_ASSET_INCOME  | 269159  | ...        | ...
+-- V_SPH_REGION_MASTER | 467     | NULL       | NULL
+
+-- 행정구역 마스터: 25개 구, 467개 동 확인
+SELECT COUNT(DISTINCT CITY_CODE) AS gu_count, COUNT(*) AS dong_count
+FROM MOVING_INTEL.ANALYTICS.V_SPH_REGION_MASTER;
+
+-- 기대 결과: gu_count = 25, dong_count = 467
+
+-- DISTRICT_GEOM NOT NULL 확인
+SELECT COUNT(*) AS null_geom
+FROM MOVING_INTEL.ANALYTICS.V_SPH_REGION_MASTER
+WHERE DISTRICT_GEOM IS NULL;
+
+-- 기대 결과: null_geom = 0
