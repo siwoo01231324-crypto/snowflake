@@ -1,0 +1,125 @@
+{
+    "version": "1.0",
+    "description": "Skill activation triggers for Claude Code. Controls when skills automatically suggest or block actions.",
+    "skills": {
+        "database-schema-design": {
+            "type": "domain",
+            "enforcement": "suggest",
+            "priority": "high",
+            "description": "Snowflake database schema design (tables, views, stages, pipes, streams, tasks)",
+            "promptTriggers": {
+                "keywords": [
+                    "schema design",
+                    "create table",
+                    "database design",
+                    "ERD",
+                    "migration",
+                    "snowflake table",
+                    "VARIANT",
+                    "CLUSTER BY",
+                    "COPY INTO",
+                    "external stage",
+                    "file format",
+                    "stream",
+                    "task",
+                    "pipe",
+                    "materialized view",
+                    "dynamic table",
+                    "data sharing",
+                    "time travel",
+                    "zero-copy clone"
+                ],
+                "intentPatterns": [
+                    "(create|design|define|build).*?(table|schema|database|view|stage)",
+                    "(optimize|improve|refactor).*?(schema|table|query|performance)",
+                    "(add|create).*?(index|constraint|column|relationship)",
+                    "(how to|best practice).*?(schema|table|snowflake)"
+                ]
+            }
+        },
+        "git-commit": {
+            "type": "domain",
+            "enforcement": "suggest",
+            "priority": "high",
+            "description": "Conventional Commits auto-analysis and generation",
+            "promptTriggers": {
+                "keywords": [
+                    "commit",
+                    "git commit",
+                    "conventional commit",
+                    "commit message",
+                    "/commit"
+                ],
+                "intentPatterns": [
+                    "(create|make|do|write).*?commit",
+                    "commit.*?(change|file|code)"
+                ]
+            }
+        },
+        "test-driven-development": {
+            "type": "domain",
+            "enforcement": "suggest",
+            "priority": "high",
+            "description": "TDD Red-Green-Refactor enforcement",
+            "promptTriggers": {
+                "keywords": [
+                    "TDD",
+                    "test driven",
+                    "test first",
+                    "red green refactor",
+                    "write test",
+                    "failing test",
+                    "unit test",
+                    "test coverage"
+                ],
+                "intentPatterns": [
+                    "(implement|add|create|build).*?(feature|function|method|endpoint)",
+                    "(fix|debug|resolve).*?(bug|issue|error)",
+                    "(write|add|create).*?test"
+                ]
+            }
+        },
+        "security-best-practices": {
+            "type": "domain",
+            "enforcement": "suggest",
+            "priority": "high",
+            "description": "Snowflake security: RBAC, network policies, data masking, row access policies",
+            "promptTriggers": {
+                "keywords": [
+                    "security",
+                    "RBAC",
+                    "role based access",
+                    "network policy",
+                    "data masking",
+                    "row access policy",
+                    "encryption",
+                    "audit",
+                    "access control",
+                    "grant",
+                    "privilege",
+                    "masking policy",
+                    "secure view",
+                    "secure function"
+                ],
+                "intentPatterns": [
+                    "(setup|configure|implement|create).*?(security|RBAC|role|policy|masking)",
+                    "(audit|review|check).*?(security|access|permission|privilege)",
+                    "(grant|revoke).*?(role|privilege|access)"
+                ]
+            }
+        }
+    },
+    "notes": {
+        "enforcement_types": {
+            "suggest": "Skill suggestion appears but doesn't block execution",
+            "block": "Requires skill to be used before proceeding (guardrail)",
+            "warn": "Shows warning but allows proceeding"
+        },
+        "priority_levels": {
+            "critical": "Highest - Always trigger when matched",
+            "high": "Important - Trigger for most matches",
+            "medium": "Moderate - Trigger for clear matches",
+            "low": "Optional - Trigger only for explicit matches"
+        }
+    }
+}
