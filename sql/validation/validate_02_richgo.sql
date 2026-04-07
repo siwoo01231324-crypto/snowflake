@@ -1,0 +1,21 @@
+-- ============================================================
+-- validate_02_richgo.sql
+-- RICHGO 뷰 3개 데이터 정합성 검증
+-- 이슈: #17
+-- ============================================================
+
+-- 3개 뷰의 row count + 날짜 범위를 한번에 확인
+SELECT 'V_RICHGO_MARKET_PRICE' AS view_name, COUNT(*) AS row_cnt,
+       MIN(YYYYMMDD) AS min_date, MAX(YYYYMMDD) AS max_date
+FROM MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE
+UNION ALL
+SELECT 'V_RICHGO_POPULATION', COUNT(*), MIN(YYYYMMDD), MAX(YYYYMMDD)
+FROM MOVING_INTEL.ANALYTICS.V_RICHGO_POPULATION
+UNION ALL
+SELECT 'V_RICHGO_YOUNG_CHILDREN', COUNT(*), MIN(YYYYMMDD), MAX(YYYYMMDD)
+FROM MOVING_INTEL.ANALYTICS.V_RICHGO_YOUNG_CHILDREN;
+
+-- 기대 결과:
+-- V_RICHGO_MARKET_PRICE  | 4356 | 2012-01-01 | 2024-12-01
+-- V_RICHGO_POPULATION    | 118  | 2025-01-01 | 2025-01-01
+-- V_RICHGO_YOUNG_CHILDREN| 118  | 2025-01-01 | 2025-01-01
