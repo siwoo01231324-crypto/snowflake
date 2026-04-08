@@ -4,9 +4,10 @@
 
 ## 시작 전 필수 확인 순서
 1. `gh issue list --assignee @me` — 내 담당 이슈 확인
-2. `AGENTS.md` — 레포 전체 목차·불변식·규칙
-3. 작업 대상 디렉토리의 `.ai.md` — 목적·구조·역할
-4. `docs/work/active/` — 현재 진행 중인 작업 내역 (있는 경우)
+2. `docs/work/EXECUTION_PLAN.md` — **현재 실행 계획·의존성 그래프·Day별 순서** (Dual-Tier Pivot 진행 중)
+3. `AGENTS.md` — 레포 전체 목차·불변식·규칙
+4. 작업 대상 디렉토리의 `.ai.md` — 목적·구조·역할
+5. `docs/work/active/` — 현재 진행 중인 작업 내역 (있는 경우)
 
 ## 아키텍처 불변식 (위반 시 CI 차단)
 
