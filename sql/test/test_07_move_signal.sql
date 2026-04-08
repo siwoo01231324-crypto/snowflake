@@ -1,0 +1,35 @@
+-- ============================================================
+-- test_07_move_signal.sql
+-- MOVE_SIGNAL_INDEX 검증 테스트 (TC-01 ~ TC-03)
+-- 이슈: #22 (feat: MOVE_SIGNAL_INDEX 4종 시그널 융합 + 교차검증)
+-- ⚠️ TDD Red: 이슈 진행 전 TC-01 실패 정상 (컬럼 미존재)
+-- ============================================================
+
+USE WAREHOUSE MOVING_INTEL_WH;
+USE SCHEMA MOVING_INTEL.ANALYTICS;
+
+-- TC-01: MOVE_SIGNAL_INDEX 컬럼 존재 + NOT NULL
+SELECT COUNT(*) AS null_idx FROM MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS
+WHERE MOVE_SIGNAL_INDEX IS NULL;
+-- EXPECTED: null_idx = 0
+
+-- TC-02: 값 범위 확인 (0~1 정규화)
+SELECT MIN(MOVE_SIGNAL_INDEX) AS min_val, MAX(MOVE_SIGNAL_INDEX) AS max_val
+FROM MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS;
+-- EXPECTED: min_val >= 0, max_val <= 1
+
+-- TC-03: 25개 구 전체 커버
+SELECT COUNT(DISTINCT CITY_CODE) AS gu_count
+FROM MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS
+WHERE MOVE_SIGNAL_INDEX IS NOT NULL;
+-- EXPECTED: gu_count = 25
+
+-- TC-04 (보조): DATA_TIER별 값 분포 확인
+SELECT DATA_TIER,
+       COUNT(DISTINCT CITY_CODE) AS gu_count,
+       ROUND(AVG(MOVE_SIGNAL_INDEX), 4) AS avg_idx,
+       ROUND(MIN(MOVE_SIGNAL_INDEX), 4) AS min_idx,
+       ROUND(MAX(MOVE_SIGNAL_INDEX), 4) AS max_idx
+FROM MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS
+GROUP BY DATA_TIER;
+-- EXPECTED: TELECOM_ONLY=22구, MULTI_SOURCE=3구, 모두 0~1 범위
