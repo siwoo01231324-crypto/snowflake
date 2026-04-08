@@ -686,11 +686,12 @@ MOVE_SIGNAL_INDEX =
     WHEN DATA_TIER = 'MULTI_SOURCE' THEN
         w1 × norm(CONTRACT_COUNT)                 -- S1: 통신 신규 계약 접수 (선행지표, 1개월 lead)
       + w2 × norm(ΔRESIDENTIAL_POPULATION)        -- S2: 거주인구 전월 대비 변동
-      + w3 × norm(NEW_HOUSING_BALANCE_COUNT)      -- S3: 신규 주택담보대출 건수
       + w4 × norm(ΔELECTRONICS_FURNITURE_SALES)   -- S4: 가전/가구 소비 전월 대비 변동
+      -- S3(NEW_HOUSING_BALANCE_COUNT) 제외: r(S1↔S3)=-0.215 (#22 실데이터 검증, "대출 시그널 제외" 규칙 적용)
   END
 
-초기 가중치 (MULTI_SOURCE): w1=0.35, w2=0.25, w3=0.25, w4=0.15
+가중치 (MULTI_SOURCE, 3종 융합): w1=0.45, w2=0.35, w4=0.20
+-- 변경 이력: 초기 4종(w1=0.35,w2=0.25,w3=0.25,w4=0.15) → #22 검증 후 S3 제외 + 비례 재조정
 
 -- 검증 후행 지표 (동시 계산, 예측에 사용 X)
 VALIDATION_OPEN_LAG = OPEN_COUNT(t) -- CONTRACT_COUNT(t-1) 의 실현 확인
