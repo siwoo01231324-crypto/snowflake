@@ -83,8 +83,8 @@
 데이터셋별로 조인 키 체계가 다르다. 통합을 위해 SPH `M_SCCO_MST`를 지역 마스터 기준으로 삼고, BJD_CODE ↔ DISTRICT_CODE 매핑 뷰를 통해 연결한다.
 
 ```
-DIM_REGION (SPH M_SCCO_MST 기반, 서울 25개 구 467개 동)
-  ├── FACT_HOUSING_PRICE   (RICHGO: BJD_CODE → DISTRICT_CODE 매핑)
+DIM_REGION (SPH M_SCCO_MST 기반, 서울 25개 구 467개 법정동 — 마스터 코드북만. FACT 테이블은 3개 구(중·영등포·서초) 한정)
+  ├── FACT_HOUSING_PRICE   (RICHGO: BJD_CODE → CITY_CODE 매핑, 법정동(BJD) 기준)
   ├── FACT_POPULATION      (RICHGO: 인구 성별/연령/영유아비율)
   ├── FACT_LIFESTYLE       (SPH: PROVINCE_CODE+CITY_CODE+DISTRICT_CODE 직접 조인)
   ├── FACT_MOVE_SIGNAL     (아정당: INSTALL_STATE+INSTALL_CITY 텍스트 조인)
@@ -95,7 +95,7 @@ DIM_REGION (SPH M_SCCO_MST 기반, 서울 25개 구 467개 동)
 
 | 데이터셋 | 조인 키 | 공간 단위 | 시간 키 |
 |---------|---------|----------|--------|
-| SPH | `PROVINCE_CODE`(2) + `CITY_CODE`(5) + `DISTRICT_CODE`(8) | 동 단위 (467개) | `STANDARD_YEAR_MONTH` (VARCHAR 'YYYYMM') |
+| SPH | `PROVINCE_CODE`(2) + `CITY_CODE`(5) + `DISTRICT_CODE`(8) | 법정동(BJD) 단위 (467개) | `STANDARD_YEAR_MONTH` (VARCHAR 'YYYYMM') |
 | RICHGO | `BJD_CODE` (법정동코드 10자리) | 동 단위 | `YYYYMMDD` (DATE) |
 | 아정당 | `INSTALL_STATE` + `INSTALL_CITY` (텍스트) | 시/군/구 단위 | `YEAR_MONTH` (DATE) |
 | NextTrade | `ISU_CD` (종목코드) + `DWDD` (일자) | 종목 단위 | `DWDD` (DATE) |
@@ -104,7 +104,7 @@ DIM_REGION (SPH M_SCCO_MST 기반, 서울 25개 구 467개 동)
 
 ### A1-1. DIM_REGION — 행정동 마스터 (SPH M_SCCO_MST 기반)
 
-> 출처: `SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST` (467건, 서울 25개 구)
+> 출처: `SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST` (467건, 서울 25개 구 — 마스터 코드북. FACT 테이블은 3개 구(중·영등포·서초) 한정)
 
 | 컬럼명 | 타입 | 설명 | PK/FK |
 |--------|------|------|-------|
@@ -233,7 +233,7 @@ JOIN (
 ### A1-5. FACT_LIFESTYLE — SPH 유동인구 + 소비 + 소득
 
 > 출처: `SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA`
-> 범위: **서울 전체 25개 구 467개 동** (2021-01 ~ 2025-12)
+> 범위: **M_SCCO_MST 마스터 25개 구 467개 법정동** (코드북). FACT 테이블(FLOATING_POPULATION_INFO, CARD_SALES_INFO, ASSET_INCOME_INFO)은 **3개 구(중구·영등포구·서초구) 한정** (해커톤 Marketplace 샘플). (2021-01 ~ 2025-12)
 
 **FLOATING_POPULATION_INFO (유동인구, 2,577,120건):**
 
@@ -526,78 +526,85 @@ import snowflake.snowpark.functions as F
 
 def build_integrated_mart(session: Session):
     """
-    RICHGO 시세 + SPH 라이프스타일 + 아정당 신규설치
-    행정동(동) 단위로 통합, 기준월 집계
+    PR #41 동기화 — 아정당 + SPH(3구) + RICHGO 구(CITY_CODE) 단위 통합 마트 생성.
+    조인 키: CITY_CODE + STANDARD_YEAR_MONTH
+    DATA_TIER: MULTI_SOURCE(중·영등포·서초 3구) / TELECOM_ONLY(나머지 22구)
     """
-    # 지역 마스터 (SPH M_SCCO_MST)
-    dim_region = session.table(
-        "SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST"
+    MULTI_SOURCE_CITIES = ["11140", "11560", "11650"]  # 중구, 영등포구, 서초구
+
+    # 아정당 spine (서울 25구 × 월별)
+    telecom = (
+        session.table("MOVING_INTEL.ANALYTICS.V_TELECOM_DISTRICT_MAPPED")
+        .filter(F.col("INSTALL_STATE") == "서울")
+        .group_by("CITY_CODE", "CITY_KOR_NAME", "PROVINCE_CODE", "STANDARD_YEAR_MONTH")
+        .agg(
+            F.sum("OPEN_COUNT").alias("OPEN_COUNT"),
+            F.sum("CONTRACT_COUNT").alias("CONTRACT_COUNT"),
+            F.sum("PAYEND_COUNT").alias("PAYEND_COUNT"),
+        )
     )
 
-    # RICHGO 시세 (BJD_CODE 기준)
-    richgo_price = session.table(
-        "MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE"
-    ).filter(F.col("SD") == "서울특별시")
-
-    # BJD_CODE ↔ DISTRICT_CODE 매핑
-    bjd_map = session.table("MOVING_INTEL.ANALYTICS.V_BJD_DISTRICT_MAP")
-
-    # SPH 유동인구 집계 (월별, 동 단위)
+    # SPH 유동인구 (3구만 실존)
     sph_pop = (
         session.table("MOVING_INTEL.ANALYTICS.V_SPH_FLOATING_POP")
-        .group_by("PROVINCE_CODE", "CITY_CODE", "DISTRICT_CODE", "STANDARD_YEAR_MONTH")
+        .group_by("CITY_CODE", "STANDARD_YEAR_MONTH")
         .agg(
-            F.sum("VISITING_POPULATION").alias("TOTAL_VISITING_POP"),
-            F.sum("RESIDENTIAL_POPULATION").alias("TOTAL_RESIDENTIAL_POP"),
-            F.sum("WORKING_POPULATION").alias("TOTAL_WORKING_POP"),
+            F.sum("TOTAL_RESIDENTIAL_POP").alias("TOTAL_RESIDENTIAL_POP"),
+            F.sum("TOTAL_WORKING_POP").alias("TOTAL_WORKING_POP"),
+            F.sum("TOTAL_VISITING_POP").alias("TOTAL_VISITING_POP"),
         )
     )
 
-    # SPH 소득/자산 집계 (월별, 동 단위)
-    sph_income = (
+    # SPH 카드매출 (3구만 실존)
+    sph_card = (
+        session.table("MOVING_INTEL.ANALYTICS.V_SPH_CARD_SALES")
+        .group_by("CITY_CODE", "STANDARD_YEAR_MONTH")
+        .agg(
+            F.sum("TOTAL_CARD_SALES").alias("TOTAL_CARD_SALES"),
+            F.sum("ELECTRONICS_FURNITURE_SALES").alias("ELECTRONICS_FURNITURE_SALES"),
+        )
+    )
+
+    # SPH 자산소득 (3구만 실존)
+    sph_asset = (
         session.table("MOVING_INTEL.ANALYTICS.V_SPH_ASSET_INCOME")
-        .group_by("PROVINCE_CODE", "CITY_CODE", "DISTRICT_CODE", "STANDARD_YEAR_MONTH")
+        .group_by("CITY_CODE", "STANDARD_YEAR_MONTH")
         .agg(
-            F.avg("AVERAGE_INCOME").alias("AVG_INCOME"),
-            F.avg("AVERAGE_ASSET_AMOUNT").alias("AVG_ASSET"),
-            F.avg("AVERAGE_PRICE_GAP").alias("AVG_PRICE_GAP"),
-            F.avg("RATE_HIGHEND").alias("AVG_HIGHEND_RATE"),
+            F.avg("AVG_INCOME").alias("AVG_INCOME"),
+            F.avg("AVG_ASSET").alias("AVG_ASSET"),
+            F.sum("NEW_HOUSING_BALANCE_COUNT").alias("NEW_HOUSING_BALANCE_COUNT"),
         )
     )
 
-    # 아정당 신규설치 (시/군/구 단위 → SPH CITY_KOR_NAME으로 텍스트 매핑)
-    telecom_install = session.table("MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL")
-
-    # RICHGO 시세 + BJD 매핑 → DISTRICT_CODE
-    richgo_with_district = (
-        richgo_price
-        .join(bjd_map, richgo_price["BJD_CODE"] == bjd_map["BJD_CODE"], "left")
+    # RICHGO 시세 (3구만 실존, YYYYMMDD → STANDARD_YEAR_MONTH 변환)
+    richgo = (
+        session.table("MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE")
+        .filter(F.col("SD") == "서울")
         .select(
-            bjd_map["PROVINCE_CODE"],
-            bjd_map["CITY_CODE"],
-            bjd_map["DISTRICT_CODE"],
-            richgo_price["YYYYMMDD"],
-            richgo_price["MEME_PRICE_PER_SUPPLY_PYEONG"],
-            richgo_price["JEONSE_PRICE_PER_SUPPLY_PYEONG"],
-            richgo_price["TOTAL_HOUSEHOLDS"],
+            F.col("CITY_CODE"),
+            F.to_char(F.col("YYYYMMDD"), "YYYYMM").alias("STANDARD_YEAR_MONTH"),
+            F.avg("MEME_PRICE_PER_SUPPLY_PYEONG").alias("AVG_MEME_PRICE"),
+            F.avg("JEONSE_PRICE_PER_SUPPLY_PYEONG").alias("AVG_JEONSE_PRICE"),
+            F.sum("TOTAL_HOUSEHOLDS").alias("TOTAL_HOUSEHOLDS"),
         )
+        .group_by("CITY_CODE", "STANDARD_YEAR_MONTH")
     )
 
-    # 통합 마트 조인 (SPH를 기준으로 left join)
+    # 통합 조인 (아정당 spine 기준, 조인 키: CITY_CODE + STANDARD_YEAR_MONTH)
     mart = (
-        dim_region
-        .join(sph_pop, ["PROVINCE_CODE", "CITY_CODE", "DISTRICT_CODE"], "left")
-        .join(sph_income, ["PROVINCE_CODE", "CITY_CODE", "DISTRICT_CODE", "STANDARD_YEAR_MONTH"], "left")
-        .join(
-            richgo_with_district,
-            (dim_region["PROVINCE_CODE"] == richgo_with_district["PROVINCE_CODE"]) &
-            (dim_region["CITY_CODE"] == richgo_with_district["CITY_CODE"]) &
-            (dim_region["DISTRICT_CODE"] == richgo_with_district["DISTRICT_CODE"]),
-            "left"
+        telecom
+        .join(sph_pop, ["CITY_CODE", "STANDARD_YEAR_MONTH"], "left")
+        .join(sph_card, ["CITY_CODE", "STANDARD_YEAR_MONTH"], "left")
+        .join(sph_asset, ["CITY_CODE", "STANDARD_YEAR_MONTH"], "left")
+        .join(richgo, ["CITY_CODE", "STANDARD_YEAR_MONTH"], "left")
+        .with_column(
+            "DATA_TIER",
+            F.when(F.col("CITY_CODE").isin(MULTI_SOURCE_CITIES), F.lit("MULTI_SOURCE"))
+             .otherwise(F.lit("TELECOM_ONLY"))
         )
     )
 
-    mart.write.save_as_table("MOVING_INTEL.ANALYTICS.INTEGRATED_MART", mode="overwrite")
+    mart.write.save_as_table("MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS", mode="overwrite")  # PR #41 동기화
     return mart
 ```
 
@@ -626,7 +633,7 @@ LEFT JOIN (
     SELECT DISTINCT PROVINCE_CODE, CITY_CODE, CITY_KOR_NAME
     FROM SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST
 ) m ON t.INSTALL_CITY = m.CITY_KOR_NAME
-WHERE t.INSTALL_STATE = '서울특별시';
+WHERE t.INSTALL_STATE = '서울';
 ```
 
 > ⚠️ 아정당 지역명과 SPH 코드명 불일치 가능. 매핑 실패 건은 수동 확인 필요.
@@ -668,19 +675,25 @@ WHERE t.INSTALL_STATE = '서울특별시';
 #### 복합 지표 산출식
 
 ```
-MOVE_SIGNAL_INDEX = 
-    w1 × norm(OPEN_COUNT)                        -- S1: 통신 신규설치 (선행지표)
-  + w2 × norm(ΔRESIDENTIAL_POPULATION)            -- S2: 거주인구 전월 대비 변동
-  + w3 × norm(NEW_HOUSING_BALANCE_COUNT)          -- S3: 신규 주택담보대출 건수
-  + w4 × norm(ΔELECTRONICS_FURNITURE_SALES)       -- S4: 가전/가구 소비 전월 대비 변동
+-- DATA_TIER 기반 분기 (MART_MOVE_ANALYSIS.DATA_TIER 컬럼)
+MOVE_SIGNAL_INDEX =
+  CASE
+    WHEN DATA_TIER = 'TELECOM_ONLY' THEN
+        norm(OPEN_COUNT)                          -- S1만: 아정당 22구, SPH FACT 없음
+    WHEN DATA_TIER = 'MULTI_SOURCE' THEN
+        w1 × norm(OPEN_COUNT)                     -- S1: 통신 신규설치 (선행지표)
+      + w2 × norm(ΔRESIDENTIAL_POPULATION)        -- S2: 거주인구 전월 대비 변동
+      + w3 × norm(NEW_HOUSING_BALANCE_COUNT)      -- S3: 신규 주택담보대출 건수
+      + w4 × norm(ΔELECTRONICS_FURNITURE_SALES)   -- S4: 가전/가구 소비 전월 대비 변동
+  END
 
-초기 가중치: w1=0.35, w2=0.25, w3=0.25, w4=0.15
+초기 가중치 (MULTI_SOURCE): w1=0.35, w2=0.25, w3=0.25, w4=0.15
 ```
 
 - `norm()` = Min-Max 정규화 (0~1), 시군구 단위 집계 후 적용
 - `Δ` = 전월 대비 변화율 `(당월 - 전월) / 전월`
 - 가중치 초기값은 도메인 지식 기반 → 시차 상관분석 결과로 튜닝
-- S1(아정당)은 시/군/구 단위 → S2~S4(SPH)는 행정동 단위이므로, S2~S4를 시/군/구로 집계하여 조인
+- S1 25구 / S2~S4 3구만 실존 → `MART_MOVE_ANALYSIS.DATA_TIER` 컬럼 기반 분기 (전처리는 #21에서 완료)
 
 #### 교차검증: 시그널 간 상관 행렬
 
@@ -694,13 +707,17 @@ import pandas as pd
 import numpy as np
 
 def validate_move_signals(session):
-    """4개 이사 프록시 시그널 간 상관 행렬 계산 (시군구 × 월 단위)"""
+    """4개 이사 프록시 시그널 간 상관 행렬 계산 (MULTI_SOURCE 3구 한정 — SPH FACT 실존 구역)"""
     
-    # S1: 아정당 신규설치
+    # MULTI_SOURCE 3구만 필터 (SPH FACT는 중구·영등포구·서초구만 실존)
+    mart = session.table("MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS")
+    mart_multi = mart.filter(F.col("DATA_TIER") == "MULTI_SOURCE")
+
+    # S1: 아정당 신규설치 (MULTI_SOURCE 구만)
     s1 = (
-        session.table("MOVING_INTEL.ANALYTICS.V_TELECOM_DISTRICT_MAPPED")
-        .group_by("YEAR_MONTH", "CITY_CODE")
-        .agg(F.sum("OPEN_COUNT").alias("S1_NEW_INSTALL"))
+        mart_multi
+        .select("STANDARD_YEAR_MONTH", "CITY_CODE", "OPEN_COUNT")
+        .rename("OPEN_COUNT", "S1_NEW_INSTALL")
         .to_pandas()
     )
     
@@ -746,6 +763,8 @@ def validate_move_signals(session):
 ```
 
 #### 검증 기준
+
+> ⚠️ 기준: MULTI_SOURCE 3구 한정, 관측 샘플 54~102행, 통계 유의성 한계 고려
 
 | 검증 항목 | 통과 기준 | 실패 시 대응 |
 |----------|----------|------------|
@@ -817,7 +836,7 @@ LIFE_ATTRACTIVENESS =
   + 0.15 × norm(AVG_ASSET_AMOUNT)     -- 자산수준 (거주 안정성)
 ```
 
-- **SPH 서울 전체 25개 구 467개 동에서 계산 가능** (기존 3개 구 제한 → 서울 전역으로 확대)
+- **SPH FACT는 3개 구(중구·영등포구·서초구)에서만 계산 가능** (해커톤 Marketplace 샘플 한정. M_SCCO_MST 마스터 25구와 혼동 주의)
 - 이 피처가 높은 행정동 = "살기 좋은 동네" → Phase 2 지역 생활 점수 모델의 입력값
 - 이사 수요 예측 모델의 보조 피처로 활용
 
@@ -850,21 +869,33 @@ MONTH_COS = COS(2 * PI() * MONTH(BASE_DATE) / 12)
 
 ### A5-1. MVP: 이사 수요 예측 모델
 
-**목표**: 시군구 단위, 향후 1~3개월 이사 수요(신규설치 건수) 예측
+**목표**: 시군구 단위, 향후 1개월 이사 수요(신규설치 건수) 예측. DATA_TIER 기반 두 Track으로 분리.
 
-| 항목 | 설계 |
+**Track A — 25구 경량 모델**
+
+| 항목 | 내용 |
 |------|------|
-| 문제 유형 | 시계열 회귀 (시군구별 이사 수요 건수 예측) |
-| 타겟 변수 | `NEW_INSTALL_CONTRACT_COUNT` (아정당 신규설치 건수, 다음 월) |
-| 주요 피처 | `MOVE_SIGNAL_INDEX`, `MEME_PRICE_PER_SUPPLY_PYEONG`, `JEONSE_PRICE_PER_SUPPLY_PYEONG`, `IS_PEAK_SEASON`, `MONTH_SIN`, `MONTH_COS` |
-| 보조 피처 (서울 전체 SPH) | `LIFE_ATTRACTIVENESS`, `TOTAL_VISITING_POP`, `AVG_INCOME`, `AVG_ASSET_AMOUNT` |
-| 영유아 피처 | `YOUNG_FAMILY_INDEX`, `AGE_UNDER5_PER_FEMALE_20TO40` |
-| 알고리즘 | Snowpark ML `XGBRegressor` (시계열 특성 피처로 인코딩) |
-| 학습 데이터 | RICHGO 2012-01 ~ 2024-06 (아정당 데이터 있는 기간 기준 조정) |
-| 검증 | 2024-07 ~ 2024-12 (walk-forward) |
-| 평가 지표 | MAPE (Mean Absolute Percentage Error) < 20% 목표 |
+| 대상 | `DATA_TIER` 무관 25구 전체 |
+| 샘플 수 | 850 (25구 × 34개월) |
+| 피처 | `OPEN_COUNT`, `CONTRACT_COUNT`, `PAYEND_COUNT`, `IS_PEAK_SEASON`, `MONTH_SIN`, `MONTH_COS` |
+| 알고리즘 | LinearRegression 또는 지수이동평균 |
+| 학습 기간 | 202307 ~ 202604 (34개월) |
+| 평가 | walk-forward 최종 6개월 |
+| MAPE 목표 | **< 25%** |
 
-> ⚠️ 아정당의 실제 데이터 기간 확인 필요. RICHGO 시세(2012-2024)와 아정당 기간이 겹치는 구간만 학습 가능.
+**Track B — MULTI_SOURCE 3구 풀 모델**
+
+| 항목 | 내용 |
+|------|------|
+| 대상 | `DATA_TIER = 'MULTI_SOURCE'` (중·영등포·서초) |
+| 샘플 수 | 102 (3구 × 34개월), RICHGO∩아정당 교집합 시 54 |
+| 피처 | Track A 피처 + `MOVE_SIGNAL_INDEX` + `TOTAL_RESIDENTIAL_POP` + `AVG_INCOME` + `TOTAL_CARD_SALES` + `NEW_HOUSING_BALANCE_COUNT` + `AVG_MEME_PRICE` + `AVG_JEONSE_PRICE` |
+| 알고리즘 | **Ridge(α=1.0)** 또는 **LightGBM(min_data_in_leaf=5)** — ⚠️ XGB 금지 (소샘플 과적합) |
+| 학습 기간 | 202307 ~ 202412 (RICHGO 상한) |
+| 평가 | walk-forward 최종 6개월 |
+| MAPE 목표 | **< 20%** |
+
+> ⚠️ Track B 샘플 54~102행은 통계적으로 매우 소규모 — Ridge/LightGBM의 정규화 필수. XGBRegressor 금지.
 
 ### A5-2. 고도화 모델 (Phase 2+)
 
@@ -879,7 +910,7 @@ MONTH_COS = COS(2 * PI() * MONTH(BASE_DATE) / 12)
 
 ```
 [Snowpark ML 학습]
-    INTEGRATED_MART → Feature 추출 → train/test split → XGBRegressor.fit()
+    MART_MOVE_ANALYSIS → Feature 추출 → walk_forward_split → 모델 학습()
         ↓
 [모델 저장]
     Snowpark Model Registry에 모델 버전 저장
@@ -895,54 +926,76 @@ MONTH_COS = COS(2 * PI() * MONTH(BASE_DATE) / 12)
 ```
 
 ```python
-# Snowpark ML — 모델 학습 & UDF 등록 (실제 피처 기반)
-from snowflake.ml.modeling.xgboost import XGBRegressor
+# Snowpark ML — Track A/B 분리 학습 & UDF 등록 (PR #41 동기화)
+from snowflake.ml.modeling.linear_model import LinearRegression, Ridge
 from snowflake.ml.registry import Registry
+from snowflake.snowpark import Window
+import snowflake.snowpark.functions as F
 
-def train_and_deploy(session):
-    # 1) 데이터 준비 (실제 컬럼명 사용)
-    mart = session.table("MOVING_INTEL.ANALYTICS.INTEGRATED_MART")
-    feature_cols = [
-        "MOVE_SIGNAL_INDEX",
-        "MEME_PRICE_PER_SUPPLY_PYEONG",
-        "JEONSE_PRICE_PER_SUPPLY_PYEONG",
-        "IS_PEAK_SEASON", "MONTH_SIN", "MONTH_COS",
-        "LIFE_ATTRACTIVENESS",
-        "TOTAL_VISITING_POP",
-        "AVG_INCOME",
-        "YOUNG_FAMILY_INDEX",
-    ]
-    target = "NEXT_MONTH_NEW_INSTALL"
+def walk_forward_split(mart, train_months: int = 28, test_months: int = 6):
+    """시계열 walk-forward split — random_split 대신 사용 (시계열에 random split 부적합)"""
+    all_months = sorted([r["STANDARD_YEAR_MONTH"] for r in mart.select("STANDARD_YEAR_MONTH").distinct().collect()])
+    train_cutoff = all_months[train_months - 1]
+    train = mart.filter(F.col("STANDARD_YEAR_MONTH") <= train_cutoff)
+    test = mart.filter(F.col("STANDARD_YEAR_MONTH") > train_cutoff)
+    return train, test
 
-    train, test = mart.random_split([0.8, 0.2], seed=42)
+def train_track_a(session):
+    """Track A — 25구 경량 모델 (LinearRegression, DATA_TIER 무관)"""
+    mart = session.table("MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS")
 
-    # 2) 학습
-    model = XGBRegressor(
-        input_cols=feature_cols,
-        label_cols=[target],
-        output_cols=["PREDICTED_NEW_INSTALL"]
-    )
+    # 타겟 파생: 다음 달 OPEN_COUNT
+    mart = mart.with_column(
+        "TARGET_NEXT_OPEN_COUNT",
+        F.lead("OPEN_COUNT", 1).over(
+            Window.partition_by("CITY_CODE").order_by("STANDARD_YEAR_MONTH")
+        )
+    ).filter(F.col("TARGET_NEXT_OPEN_COUNT").is_not_null())
+
+    feature_cols = ["OPEN_COUNT", "CONTRACT_COUNT", "PAYEND_COUNT", "IS_PEAK_SEASON", "MONTH_SIN", "MONTH_COS"]
+    target = "TARGET_NEXT_OPEN_COUNT"
+
+    train, test = walk_forward_split(mart, train_months=28, test_months=6)
+
+    model = LinearRegression(input_cols=feature_cols, label_cols=[target], output_cols=["PREDICTED_OPEN_COUNT"])
     model.fit(train)
 
-    # 3) 평가
-    predictions = model.predict(test)
-
-    # 4) 모델 레지스트리에 저장
     registry = Registry(session=session)
-    mv = registry.log_model(
-        model,
-        model_name="move_demand_predictor",
-        version_name="v1",
-        sample_input_data=train.select(feature_cols)
-    )
+    mv = registry.log_model(model, model_name="move_demand_track_a", version_name="v1",
+                             sample_input_data=train.select(feature_cols))
+    mv.create_service(service_name="predict_track_a_service", service_compute_pool="MOVING_INTEL_POOL")
+    return model.predict(test)
 
-    # 5) UDF로 배포
-    mv.create_service(
-        service_name="predict_move_demand_service",
-        service_compute_pool="MOVING_INTEL_POOL"
-    )
+def train_track_b(session):
+    """Track B — MULTI_SOURCE 3구 풀 모델 (Ridge α=1.0, XGB 금지)"""
+    mart = session.table("MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS")
+    mart = mart.filter(F.col("DATA_TIER") == "MULTI_SOURCE")
 
-    return predictions
+    # 타겟 파생: 다음 달 OPEN_COUNT
+    mart = mart.with_column(
+        "TARGET_NEXT_OPEN_COUNT",
+        F.lead("OPEN_COUNT", 1).over(
+            Window.partition_by("CITY_CODE").order_by("STANDARD_YEAR_MONTH")
+        )
+    ).filter(F.col("TARGET_NEXT_OPEN_COUNT").is_not_null())
+
+    feature_cols = [
+        "OPEN_COUNT", "CONTRACT_COUNT", "PAYEND_COUNT", "IS_PEAK_SEASON", "MONTH_SIN", "MONTH_COS",
+        "MOVE_SIGNAL_INDEX", "TOTAL_RESIDENTIAL_POP", "AVG_INCOME",
+        "TOTAL_CARD_SALES", "NEW_HOUSING_BALANCE_COUNT", "AVG_MEME_PRICE", "AVG_JEONSE_PRICE",
+    ]
+    target = "TARGET_NEXT_OPEN_COUNT"
+
+    train, test = walk_forward_split(mart, train_months=28, test_months=6)
+
+    model = Ridge(alpha=1.0, input_cols=feature_cols, label_cols=[target], output_cols=["PREDICTED_OPEN_COUNT"])
+    model.fit(train)
+
+    registry = Registry(session=session)
+    mv = registry.log_model(model, model_name="move_demand_track_b", version_name="v1",
+                             sample_input_data=train.select(feature_cols))
+    mv.create_service(service_name="predict_track_b_service", service_compute_pool="MOVING_INTEL_POOL")
+    return model.predict(test)
 ```
 
 > 🤖 Claude Code: 모델 코드 생성, 하이퍼파라미터 탐색 스크립트 작성
@@ -954,16 +1007,16 @@ def train_and_deploy(session):
 
 | 항목 | MVP (해커톤 04-12 마감) | 고도화 (Phase 2+) |
 |------|------------------------|-------------------|
-| **데이터 범위** | 서울 전체 (RICHGO 2012-2024) + SPH 25구 467동 | 수도권 확대, 전국 SPH |
-| **핵심 모델** | XGBRegressor 이사 수요 예측 | LSTM/Prophet 시계열, 앙상블 |
+| **데이터 범위** | Track A: 25구 × 아정당 2023-2026 (850행) / Track B: 3구(중·영등포·서초) × 아정당+SPH+RICHGO 교집합 (54~102행) | 수도권 확대, 전국 SPH |
+| **핵심 모델** | Track A: LinearRegression(25구 경량) / Track B: Ridge α=1.0(MULTI_SOURCE 3구 풀, **XGB 금지**) | LSTM/Prophet 시계열, 앙상블 |
 | **피처** | MOVE_SIGNAL_INDEX + 계절성 + 시세 + 라이프스타일 | 영유아 피처, 주식 상관 피처 추가 |
-| **데이터 조인** | RICHGO ↔ 아정당 (핵심) + SPH (보조, 서울 전체) | 4종 전체 크로스 조인 |
+| **데이터 조인** | MART_MOVE_ANALYSIS DATA_TIER 컬럼 기반 Tier별 피처 선택 | 4종 전체 크로스 조인 |
 | **전처리** | forward-fill + 기본 클리핑 + BJD↔DISTRICT 매핑 | 고급 보간, 이상치 자동 탐지 |
 | **배포** | UDF 등록 → Streamlit 호출 | Model Registry 버전 관리, A/B 테스트 |
 | **시각화** | 히트맵 1개 + 예측 차트 | 지도 대시보드 + AI 에이전트 챗봇 |
 | **Cortex AI** | AI_COMPLETE 인사이트 생성 | Cortex Agents 멀티툴 오케스트레이션 |
 | **Cortex AI Functions** | AI_COMPLETE (인사이트), AI_CLASSIFY (등급), AI_AGG (요약), AI_EMBED+VECTOR (유사 단지) | AI_SENTIMENT, AI_TRANSLATE, AI_EXTRACT, AI_REDACT |
-| **평가 기준** | MAPE < 20% | MAPE < 10%, 시차 상관 r > 0.7 |
+| **평가 기준** | Track A MAPE < 25% · Track B MAPE < 20% | MAPE < 10%, 시차 상관 r > 0.7 |
 
 ---
 
@@ -973,7 +1026,7 @@ def train_and_deploy(session):
 |------|------|--------|-------|
 | **04-06 (일)** | 데이터 모델 설계 확정 + DDL 작성 | 이 문서 + DDL SQL 파일 | 🤖 DDL 생성, 👤 설계 리뷰 |
 | **04-07 (월)** | Marketplace 데이터셋 4종 구독 + 뷰 생성 + 데이터 탐색 | 뷰 11개 + 데이터 프로파일 리포트 | 👤 구독(Get), 🤖 뷰·검증 SQL |
-| **04-08 (화)** | 전처리 파이프라인 구현 + BJD↔DISTRICT 매핑 검증 + 통합 마트 생성 | Snowpark 전처리 코드 + INTEGRATED_MART 테이블 | 🤖 코드 생성, 👤 실행·확인 |
+| **04-08 (화)** | 전처리 파이프라인 구현 + BJD↔DISTRICT 매핑 검증 + 통합 마트 생성 | Snowpark 전처리 코드 + MART_MOVE_ANALYSIS 테이블 | 🤖 코드 생성, 👤 실행·확인 |
 | **04-09 (수)** | Feature Engineering + 시차 상관분석 | 피처 테이블 + lag correlation 결과 | 🤖 피처 코드, 👤 결과 해석 |
 | **04-10 (목)** | ML 모델 학습 + 평가 + UDF 배포 | 학습된 모델 + UDF + 성능 리포트 | 🤖 학습 코드, 👤 실행·평가 |
 | **04-11 (금)** | 대시보드 연동 + E2E 통합 테스트 | 예측 결과가 Streamlit에 표시 | 🤖+👤 통합 |
@@ -1154,7 +1207,7 @@ GET /api/v1/move-demand?district_code=11650101&start_month=202604&end_month=2026
 **내부 SQL 로직**
 
 ```sql
--- SPH M_SCCO_MST 기반 행정구역 마스터 (서울 25개 구, 467개 동)
+-- SPH M_SCCO_MST 기반 행정구역 마스터 (서울 25개 구, 467개 법정동(BJD))
 SELECT
     m.DISTRICT_CODE,
     m.PROVINCE_KOR_NAME,
@@ -1190,7 +1243,7 @@ ORDER BY m.PROVINCE_CODE, m.CITY_CODE, m.DISTRICT_CODE;
     }
   ],
   "total_count": 467,
-  "note": "SPH 데이터는 서울 전체 25개 구 467개 동 커버 (구 버전의 '3개 구 한정' 오류 수정됨)"
+  "note": "SPH M_SCCO_MST 마스터는 25개 구 467개 법정동. FACT 테이블(FLOATING_POPULATION_INFO/CARD_SALES_INFO/ASSET_INCOME_INFO)은 3개 구(중·영등포·서초)만 실존. 22구 요청 시 아정당 경량 프로필만 반환. [이력: 기존 '3개 구 한정' → 2026-04-07 #20 에서 25구로 잘못 정정 → 2026-04-08 #40 #21 Snowflake 검증으로 MULTI_SOURCE 3구로 재롤백]"
 }
 ```
 
@@ -1304,16 +1357,29 @@ GET /api/v1/roi-calc?industry=rental&district_code=11650101&budget=10000000&conv
 
 모든 비즈니스 로직은 Snowflake UDF로 구현한다. Streamlit 앱과 Cortex Agents 모두 동일한 UDF를 호출하여 로직 중복을 방지한다.
 
+### B3-0. UDF 커버리지 매트릭스 (Dual-Tier)
+
+`MART_MOVE_ANALYSIS.DATA_TIER` 컬럼 기반으로 UDF 내부 로직이 Tier별 분기한다.
+
+| UDF | MULTI_SOURCE (3구: 중·영등포·서초) | TELECOM_ONLY (22구) |
+|---|---|---|
+| `PREDICT_MOVE_DEMAND` | Track B 풀 피처 모델 (Ridge, 15+ 컬럼) | Track A 경량 모델 (선형, 3 컬럼) |
+| `CALC_ROI` | RICHGO 평당가 + SPH 업종 분포 정밀 ROI | OPEN_COUNT × 평균 단가 근사 ROI (low confidence) |
+| `GET_SEGMENT_PROFILE` | population/income/consumption/housing 4섹션 풀 프로필 | telecom_summary 경량 프로필만 |
+
+모든 UDF는 반환에 `tier` 또는 `data_tier` 필드를 포함한다.
+UDF 호출 시 내부 로직: `CITY_CODE` → `DATA_TIER` 조회 → Tier별 분기 실행.
+
 ### B3-1. PREDICT_MOVE_DEMAND — 이사 수요 예측
 
 ```sql
 CREATE OR REPLACE FUNCTION PREDICT_MOVE_DEMAND(
-    district_code VARCHAR,   -- SPH DISTRICT_CODE (8자리)
+    city_code VARCHAR,       -- CITY_CODE (5자리 시군구코드, Dual-Tier 마트 조인 키)
     start_month VARCHAR,     -- 'YYYYMM'
     end_month VARCHAR        -- 'YYYYMM'
 )
 RETURNS TABLE (
-    district_code VARCHAR,
+    city_code VARCHAR,
     city_name VARCHAR,
     district_name VARCHAR,
     target_month VARCHAR,
@@ -1325,7 +1391,9 @@ RETURNS TABLE (
     total_households INTEGER,    -- RICHGO TOTAL_HOUSEHOLDS
     segment_high_income_ratio FLOAT,
     segment_family_ratio FLOAT,
-    segment_single_ratio FLOAT
+    segment_single_ratio FLOAT,
+    data_tier VARCHAR,        -- 'MULTI_SOURCE' 또는 'TELECOM_ONLY'
+    confidence FLOAT          -- 교차검증 R² 값 (TELECOM_ONLY는 낮음)
 )
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
@@ -1333,10 +1401,11 @@ PACKAGES = ('snowflake-snowpark-python', 'pandas', 'scikit-learn')
 HANDLER = 'predict_move_demand'
 AS
 $$
-def predict_move_demand(district_code, start_month, end_month):
+def predict_move_demand(city_code, start_month, end_month):
     """
     내부 로직 개요:
-    1. M_SCCO_MST에서 DISTRICT_CODE → INSTALL_STATE/INSTALL_CITY 매핑
+    0. CITY_CODE 기반 DATA_TIER 감지 → Track A/B 모델 선택
+    1. M_SCCO_MST에서 CITY_CODE → INSTALL_CITY 매핑
     2. V05_REGIONAL_NEW_INSTALL에서 OPEN_COUNT 조회 (이사 프록시)
        - OPEN_COUNT: 신규 통신 개통 = 이사 후 통신 재개설 선행지표
     3. REGION_APT_RICHGO_MARKET_PRICE_M_H에서 아파트 시세 조회 (교차 검증용)
@@ -1403,7 +1472,9 @@ RETURNS TABLE (
     predicted_conversion_rate FLOAT,
     expected_leads INTEGER,
     cost_per_lead INTEGER,
-    roi_improvement_pct FLOAT
+    roi_improvement_pct FLOAT,
+    tier VARCHAR,             -- 'MULTI_SOURCE' 또는 'TELECOM_ONLY'
+    confidence VARCHAR        -- 'high' (MULTI_SOURCE) / 'approximate' (TELECOM_ONLY)
 )
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
@@ -1414,6 +1485,7 @@ $$
 def calc_roi(industry, district_code, budget, conversion_rate=None):
     """
     내부 로직 개요:
+    0. MART_MOVE_ANALYSIS.DATA_TIER 조회 → Tier 분기 (MULTI_SOURCE 정밀 / TELECOM_ONLY 근사)
     1. 업종별 기본 전환율 테이블 조회 (없으면 기본값 사용)
     2. PREDICT_MOVE_DEMAND 호출하여 해당 지역 이사 프록시 건수 조회
        (OPEN_COUNT 기반)
@@ -1488,7 +1560,7 @@ def get_segment_profile(district_code):
        - RESIDENTIAL_POPULATION: 거주인구
        - WORKING_POPULATION: 직장인구
        - VISITING_POPULATION: 방문인구
-       필터: DISTRICT_CODE = district_code (서울 25개 구 모두 가능)
+       필터: CITY_CODE = city_code. SPH FLOATING_POPULATION_INFO/CARD_SALES_INFO/ASSET_INCOME_INFO는 MULTI_SOURCE 3구(중구/영등포구/서초구)만 실존이므로, TELECOM_ONLY 22구 요청 시 아정당 기반 경량 프로필만 반환
     3. ASSET_INCOME_INFO에서 자산소득 데이터 조회
        - AVERAGE_INCOME, MEDIAN_INCOME, AVERAGE_HOUSEHOLD_INCOME
        - AVERAGE_ASSET_AMOUNT, AVERAGE_SCORE (신용점수)
@@ -1520,7 +1592,7 @@ $$;
 | 출력 | `avg_apt_전세가_평당` | FLOAT | REGION_APT_RICHGO_MARKET_PRICE_M_H.JEONSE_PRICE_PER_SUPPLY_PYEONG | 평당 전세가 |
 | 출력 | `income_to_price_ratio` | FLOAT | 파생 | 소득 대비 주택 가격 비율 [추정] |
 
-> **커버리지 업데이트**: SPH 데이터는 서울 전체 25개 구 467개 동 커버. 기존 "서초구/영등포구/중구 3개 구 한정" 설명은 오류였으므로 삭제.
+> **커버리지**: SPH M_SCCO_MST는 서울 25개 구 467개 법정동(마스터 코드북). FACT 테이블은 3개 구(중구·영등포구·서초구)만 실존(해커톤 샘플). 22구에서 SPH FACT 조회 시 NULL 반환. (기존 "3개 구 한정" → 2026-04-07 #20에서 25구로 잘못 정정 → 2026-04-08 #40 #21 Snowflake 검증으로 MULTI_SOURCE 3구로 재롤백)
 
 ---
 
@@ -1776,7 +1848,7 @@ tables:
   # === 지역 생활 빅데이터 ===
   - name: floating_population_info
     description: >
-      SPH 유동인구 데이터. 서울 25개 구 467개 동 전체 커버.
+      SPH 유동인구 데이터. FACT는 3개 구(중구·영등포구·서초구) 한정. M_SCCO_MST 마스터는 25구 467개 법정동.
       2021-01~2025-12. DISTRICT_CODE(8자리) 기준.
     base_table: SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.FLOATING_POPULATION_INFO
     dimensions:
@@ -2097,7 +2169,7 @@ $$;
 | **서빙 방식** | Streamlit 내부 UDF 호출 | Snowflake SQL API + External Function |
 | **이사 수요 예측** | V05.OPEN_COUNT 프록시 (선형회귀/간단 시계열) [추정] | V05 + V01 앙상블 (Prophet/XGBoost) |
 | **ROI 계산** | UDF (벤치마크 상수 기반, CARD_SALES_INFO 참조) | UDF (업종별 실제 전환율 학습) |
-| **세그먼트 분석** | 서울 25개 구 전체 (ASSET_INCOME_INFO 기반) | 전국 확대 (추가 데이터 소싱) |
+| **세그먼트 분석** | MULTI_SOURCE 3구(중·영등포·서초) 풀 프로필 (ASSET_INCOME_INFO 기반, FACT 3구만 실존) / TELECOM_ONLY 22구는 아정당 경량 프로필 | 전국 확대 (Marketplace 추가 데이터 소싱) |
 | **자연어 질의** | Cortex Analyst (4종 실제 테이블 시맨틱 모델) | Cortex Agents (멀티툴 오케스트레이션) |
 | **검색** | SQL 기반 필터링 | Cortex Search RAG (RICHGO 인덱싱) |
 | **Cortex AI Functions** | AI_COMPLETE (인사이트), AI_CLASSIFY (등급), AI_AGG (요약), AI_EMBED+VECTOR (유사 지역) | AI_SENTIMENT, AI_TRANSLATE, AI_EXTRACT, AI_REDACT |
@@ -2289,7 +2361,7 @@ def get_move_demand_data(year_month, cities):
         LEFT JOIN SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST m
             ON v.INSTALL_CITY = m.CITY_KOR_NAME
         WHERE v.YEAR_MONTH = :1
-          AND v.INSTALL_STATE = '서울특별시'
+          AND v.INSTALL_STATE = '서울'
           AND (:2 IS NULL OR v.INSTALL_CITY IN (:2))
         ORDER BY move_demand_index DESC
     """
@@ -2339,7 +2411,7 @@ def get_move_demand_data(year_month, cities):
 | 소비 패턴 | 20개 업종별 매출 (FOOD, COFFEE, BEAUTY 등) | `CARD_SALES_INFO` |
 | 지역 | `CITY_KOR_NAME` (서울 25개 구 전체) | `M_SCCO_MST` |
 
-> **변경**: 데이터 커버리지는 **서울 전체 25개 구** (467개 동). 기존 "3개 구만 커버" 가정은 실제와 다름 — SPH는 서울 전체를 커버함.
+> **커버리지**: M_SCCO_MST 마스터는 서울 25개 구 467개 법정동. FACT 테이블은 3개 구(중·영등포·서초)만 실존. 지역 선택 25구 전체 가능하나, SPH FACT 기반 지표는 3구에서만 non-NULL. (기존 "3개 구만 커버" → 2026-04-07 #20에서 25구로 잘못 정정 → 2026-04-08 #40 #21 Snowflake 검증으로 MULTI_SOURCE 3구로 재롤백)
 
 ### 세그먼트 쿼리 (Snowpark)
 
@@ -2395,6 +2467,10 @@ def get_segment_data(year_month, age_groups, gender, city_codes):
 │                          │  │      │ │      │       │
 │                          │  └──────┘ └──────┘       │
 │                          │                          │
+│                          │  [🟢 MULTI_SOURCE 정밀]   │
+│                          │  또는                    │
+│                          │  [🟡 TELECOM_ONLY 근사]  │
+│                          │                          │
 │                          │  📈 Before/After 비교 차트 │
 └──────────────────────────┴──────────────────────────┘
 ```
@@ -2404,7 +2480,7 @@ def get_segment_data(year_month, age_groups, gender, city_codes):
 | 컴포넌트 | Streamlit API | 설명 |
 |---------|---------------|------|
 | 업종 선택 | `st.selectbox` | 가전 렌탈 / 인테리어 / 이사 서비스 / 통신사 |
-| 지역 선택 | `st.selectbox` | 서울 25개 구 (M_SCCO_MST 기반) |
+| 지역 선택 | `st.selectbox` | 서울 25개 구 (M_SCCO_MST 기반) — 선택한 구의 `MART_MOVE_ANALYSIS.DATA_TIER` 조회 → 배지/문구 렌더링 |
 | 월 마케팅 예산 | `st.number_input` | 단위: 만원 (기본값 1,000만원) |
 | 예상 전환율 | `st.slider` | 0.5% ~ 10% (기본값 2%) |
 | 계산 버튼 | `st.form_submit_button` | `st.form` 내부 |
@@ -2422,7 +2498,14 @@ INDUSTRY_PARAMS = {
     "통신사":    {"ltv": 96, "base_cpa": 40, "conv_uplift": 2.0},
 }
 
-def calculate_roi(industry, budget, conv_rate):
+def calculate_roi(industry, budget, conv_rate, city_code=None):
+    data_tier = query_mart_tier(city_code) if city_code else "TELECOM_ONLY"
+    if data_tier == "MULTI_SOURCE":
+        # RICHGO 시세 + SPH 업종 분포 기반 정밀 ROI
+        pass  # 정밀 계산 구현 예정
+    else:
+        # OPEN_COUNT 기반 근사 ROI (TELECOM_ONLY 22구)
+        pass  # 근사 계산 구현 예정
     params = INDUSTRY_PARAMS[industry]
     # 기존 방식
     base_leads = budget / params["base_cpa"]
@@ -2459,13 +2542,18 @@ def get_apt_price_by_region(sgg_name):
           AND YYYYMMDD >= DATEADD('month', -6, CURRENT_DATE())
         GROUP BY SGG
     """
-    return session.sql(query, params=[sgg_name]).to_pandas()
+    result = session.sql(query, params=[sgg_name]).to_pandas()
+    if result.empty:
+        return {"avg_meme_price": None, "avg_jeonse_price": None, "total_households": 0,
+                "fallback": True, "note": "TELECOM_ONLY 22구 — RICHGO 시세 3구 제한, 시세 근사 미지원"}
+    return result
 ```
 
 **데이터 근거**:
 - 전환율 200% 향상: 글로벌 Pre-Mover 마케팅 벤치마크 (백서 섹션 7)
 - 업종별 LTV/CPA: 백서 섹션 5 수익 모델 기반
 - 아파트 시세: RICHGO `REGION_APT_RICHGO_MARKET_PRICE_M_H` (2012-01~2024-12)
+- TELECOM_ONLY 22구는 RICHGO 시세 없음 → 전환율 벤치마크의 상한 근사만 가능, 정밀도 ↓
 
 ---
 
@@ -2517,7 +2605,7 @@ if prompt := st.chat_input("이사 수요에 대해 질문하세요"):
 | 통계청 SGIS | 행정동 경계 SHP/GeoJSON (공식) | 고도화 시 더 세밀한 동 단위 필요할 경우 |
 | 공공데이터포털 | 행정구역 경계 GeoJSON | 대안 |
 
-> **핵심 변경**: 별도 GeoJSON 파일 다운로드/업로드 불필요. SPH `M_SCCO_MST.DISTRICT_GEOM` (GEOGRAPHY 타입)에 서울 25개 구(467개 동) 경계가 내장됨. `ST_ASGEOJSON(DISTRICT_GEOM)` 함수로 pydeck용 GeoJSON 바로 추출.
+> **핵심 변경**: 별도 GeoJSON 파일 다운로드/업로드 불필요. SPH `M_SCCO_MST.DISTRICT_GEOM` (GEOGRAPHY 타입)에 서울 25개 구(467개 법정동) 경계가 내장됨. `ST_ASGEOJSON(DISTRICT_GEOM)` 함수로 pydeck용 GeoJSON 바로 추출.
 
 ### GIS 파이프라인 (변경 후)
 
@@ -2547,7 +2635,7 @@ def get_seoul_geojson_with_demand(year_month):
         LEFT JOIN SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V05_REGIONAL_NEW_INSTALL v
             ON m.CITY_KOR_NAME = v.INSTALL_CITY
             AND v.YEAR_MONTH = :1
-            AND v.INSTALL_STATE = '서울특별시'
+            AND v.INSTALL_STATE = '서울'
         WHERE m.PROVINCE_CODE = '11'
         GROUP BY 1, 2, 3, 4, 5
     """
@@ -2603,7 +2691,7 @@ def get_seoul_geojson_with_demand(year_month):
 |------|------|------|---------|
 | 1 | 0:00~0:30 | 히트맵 탭 (전체 뷰) | "코웨이 마케팅팀에 다음 달 이사 수요 예측 대시보드가 도착했습니다. 아정당(통신사) 신규개통 데이터로 서울 전역의 이사 수요를 한눈에 봅니다." |
 | 2 | 0:30~1:00 | 히트맵 탭 (강남구 클릭) | "강남구를 클릭하면 이사 수요 지수가 나옵니다. 전월 대비 신규개통 23% 상승 — 이사 수요 급증 신호입니다." |
-| 3 | 1:00~1:30 | 세그먼트 탭 | "어떤 고객이 이사하는지 봅시다. SPH 데이터로 서울 25개 구 전체의 연령대·성별·소득 분포를 확인합니다. 30대 여성, 중소득 세그먼트가 이사 수요 1위 — 코웨이 정수기 핵심 타겟과 일치합니다." |
+| 3 | 1:00~1:30 | 세그먼트 탭 | "어떤 고객이 이사하는지 봅시다. SPH FACT 데이터(중·영등포·서초 MULTI_SOURCE 3구)로 연령대·성별·소득 분포를 확인합니다. 30대 여성, 중소득 세그먼트가 이사 수요 1위 — 코웨이 정수기 핵심 타겟과 일치합니다. (TELECOM_ONLY 22구는 아정당 경량 프로필로 보완)" |
 | 4 | 1:30~2:15 | ROI 계산기 탭 | "이 데이터로 캠페인을 돌리면? 업종 '가전 렌탈', 월 예산 1,000만원 입력. 기존 방식 대비 리드 50% 증가, 전환율 200% 향상, CPA 33% 절감." |
 | 5 | 2:15~2:45 | 히트맵 탭 복귀 | "무빙 인텔리전스는 통신 신규개통 데이터로 이사 2~4주 전에 수요를 예측합니다. 한국 최초, APAC 최초입니다." |
 | 6 | 2:45~3:00 | 정리 슬라이드 | "감사합니다. B2B SaaS로 Year 1 ARR 13억원, 이사 연관 시장 1.5조원을 공략합니다." |
@@ -2623,7 +2711,7 @@ def get_seoul_geojson_with_demand(year_month):
 | **탭 구성** | 3탭 (히트맵, 세그먼트, ROI) | 4탭+ (AI 질의 추가) |
 | **지도** | pydeck choropleth (서울 25개 구, M_SCCO_MST.DISTRICT_GEOM) | folium 검토, 전국 확대 |
 | **이사 수요 프록시** | V05_REGIONAL_NEW_INSTALL.OPEN_COUNT (신규개통) | 다중 시그널 앙상블 |
-| **세그먼트 데이터** | SPH 서울 25개 구 전체 (FLOATING_POPULATION_INFO, ASSET_INCOME_INFO) | 수도권→전국 확대 |
+| **세그먼트 데이터** | SPH MULTI_SOURCE 3구(중·영등포·서초)만 (FLOATING_POPULATION_INFO, ASSET_INCOME_INFO 실존). TELECOM_ONLY 22구는 아정당 경량 프로필 | 수도권→전국 확대 (Marketplace 추가) |
 | **아파트 시세** | REGION_APT_RICHGO_MARKET_PRICE_M_H (2012-2024) | 실시간 시세 연동 |
 | **필터** | 기간, 구, 수요 등급, 연령/성별 세그먼트 | 커스텀 필터 저장, 알림 설정 |
 | **AI 기능** | 없음 | Cortex Analyst 자연어 질의 |
@@ -2699,7 +2787,7 @@ def get_seoul_geojson_with_demand(year_month):
 | 데이터 검증 쿼리 | 행수, 기간, 결측 확인 SQL (실제 테이블 기준) |
 | Snowpark 전처리 코드 | `build_integrated_mart()` (SPH 3개 테이블 + 아정당 V05 조인) |
 | Feature Engineering 코드 | `MOVE_SIGNAL_INDEX` (OPEN_COUNT 기반 정규화), lag 분석 |
-| ML 학습 코드 | `train_and_deploy()` (Snowpark ML) |
+| ML 학습 코드 | `train_track_a()` / `train_track_b()` / `walk_forward_split()` (Snowpark ML, Dual-Tier) |
 | UDF 코드 3개 | `PREDICT_MOVE_DEMAND`, `CALC_ROI`, `GET_SEGMENT_PROFILE` |
 | YAML 시맨틱 모델 | `moving_intelligence_semantic_model.yaml` (V05_REGIONAL_NEW_INSTALL, M_SCCO_MST, REGION_APT_RICHGO_MARKET_PRICE_M_H 참조) |
 | Cortex AI Functions SQL | AI_COMPLETE, AI_CLASSIFY, AI_AGG, AI_EMBED 쿼리 + Streamlit 연동 코드 |
@@ -2712,7 +2800,7 @@ def get_seoul_geojson_with_demand(year_month):
 | 항목 | MVP (해커톤 04-12 마감) | 고도화 (Phase 2+) |
 |------|------------------------|-------------------|
 | **데이터** | V05_REGIONAL_NEW_INSTALL(이사 프록시) + SPH 서울 전체 25개 구 + RICHGO(2012-2024) | 수도권→전국 확대 |
-| **ML 모델** | XGBRegressor (MAPE < 20%) | LSTM/Prophet 앙상블 (MAPE < 10%) |
+| **ML 모델** | Track A LinearRegression(25구, MAPE<25%) / Track B Ridge α=1.0(MULTI_SOURCE 3구, MAPE<20%, XGB 금지) | LSTM/Prophet 앙상블 (MAPE < 10%) |
 | **서빙** | Streamlit 내부 UDF 호출 | Snowflake SQL API + External Function |
 | **UI** | 3탭 (히트맵, 세그먼트, ROI) | 4탭+ (AI 챗봇 추가) |
 | **지도** | pydeck choropleth (서울 25개 구, M_SCCO_MST.DISTRICT_GEOM 내장) | folium 검토, 전국 |
@@ -2768,7 +2856,7 @@ snowflake/
 │   │   └── seasonal.py          계절성 피처 — A4-5
 │   ├── ml/                      ML 모델 학습·배포 (Part A5)
 │   │   ├── __init__.py
-│   │   ├── train.py             train_and_deploy() — A5-3
+│   │   ├── train.py             train_track_a() / train_track_b() / walk_forward_split() — A5-3 Dual-Tier
 │   │   └── evaluate.py          모델 평가 (MAPE 등)
 │   └── app/                     Streamlit 대시보드 (Part C)
 │       ├── app.py               앱 진입점 — C1
@@ -2813,7 +2901,7 @@ snowflake/
 | A2-3 DDL/뷰 | `sql/ddl/`, `sql/views/` | CREATE DB/SCHEMA, 뷰 10개 |
 | A3 전처리 | `src/pipeline/` | build_integrated_mart() |
 | A4 Feature Engineering | `src/features/` | MOVE_SIGNAL_INDEX, lag 분석 |
-| A5 ML 모델 | `src/ml/` | train_and_deploy(), XGBRegressor |
+| A5 ML 모델 | `src/ml/` | train_track_a()(LinearRegression, 25구), train_track_b()(Ridge α=1.0, MULTI_SOURCE 3구), walk_forward_split() |
 | B3 UDF/UDTF | `sql/udf/` | PREDICT_MOVE_DEMAND 등 3개 |
 | B4 Cortex AI | `sql/cortex/` | AI_COMPLETE, AI_CLASSIFY 등 |
 | B5 Cortex Analyst | `config/` | semantic_model.yaml |
@@ -2838,7 +2926,7 @@ snowflake/
 - 글로벌 Pre-Mover 마케팅 전환율 벤치마크: 이벤트 트리거 캠페인 전환율 일반 대비 200% (백서 섹션 7 출처, `docs/background/13_competitive-landscape.md`)
 - Snowflake Marketplace 실제 스키마 레퍼런스 (`.omc/research/actual-schema-reference.md`)
   - RICHGO: `KOREAN_POPULATION__APARTMENT_MARKET_PRICE_DATA.HACKATHON_2025Q2.REGION_APT_RICHGO_MARKET_PRICE_M_H` (2012-01~2024-12, 4,356건)
-  - SPH: `SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA` — FLOATING_POPULATION_INFO, CARD_SALES_INFO, ASSET_INCOME_INFO, M_SCCO_MST (서울 전체 25개 구, 2021-2025)
+  - SPH: `SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA` — M_SCCO_MST 마스터(서울 25개 구 467개 법정동) + FLOATING_POPULATION_INFO·CARD_SALES_INFO·ASSET_INCOME_INFO FACT(MULTI_SOURCE 3구: 중구 11140·영등포구 11560·서초구 11650, 2021-2025) — 해커톤 Marketplace 샘플 실측 (#40 검증)
   - 아정당: `SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V05_REGIONAL_NEW_INSTALL` (신규개통 = 이사 프록시, 시/도+시/군/구 단위)
   - SPH M_SCCO_MST.DISTRICT_GEOM (GEOGRAPHY 타입) — 별도 GeoJSON 파일 불필요
 - Snowflake Cortex AI Functions 공식 문서: AI_COMPLETE, AI_CLASSIFY, AI_AGG, AI_EMBED 등 (GA, US West Oregon 전체 지원)
@@ -2848,3 +2936,58 @@ snowflake/
 - Snowpark Python UDF 공식 문서: Snowpark Python UDF/UDTF
 - Streamlit in Snowflake 공식 문서: Streamlit in Snowflake (GA, 컨테이너 런타임 2026-03) — pydeck 지원, 환경 제약
 - 프로젝트 기획서: `docs/whitepaper/v1.0-moving-intelligence.md`
+
+---
+
+## 변경 이력
+
+> ⚠️ 이 파일은 **누적 이력**이다. 한 항목에 여러 엔트리가 있을 경우 **가장 아래(가장 최신) 엔트리가 현재 사실**이다. 과거 엔트리는 추적·디버깅 목적으로 보존된다.
+
+### 2026-04-08 — #40 (#21 Snowflake 실데이터 검증 기반 12건+α 정정)
+
+**배경**: #21 PR #41 머지로 `MART_MOVE_ANALYSIS` Dual-Tier 마트 확정 (`MULTI_SOURCE` 3구 / `TELECOM_ONLY` 22구). dev_spec 원본은 #20 cycle에서 잘못 "SPH 25구로 회귀" 한 상태였음. Snowflake Python connector 직검증 + PR #41 코드 직독 + 후속 이슈 body 검토 기반으로 다음 항목 정정.
+
+**검증 출처**: `.omc/research/snowflake-ground-truth.md` (Snowflake 실쿼리 결과 + PR #41 `pipelines/preprocessing.py` 직독 + open 이슈 #22~#43 body 키워드 대조)
+
+**핵심 정정 12건 + 추가 잔여 8건**:
+
+| # | 항목 | 변경 전 (요약) | 변경 후 (요약) |
+|---|------|---------------|---------------|
+| 1 | INSTALL_STATE/RICHGO SD 필터 | `'서울특별시'` (3곳: A3-3 540, A3-4 629, B2 2292/2550) | `'서울'` (V_TELECOM_NEW_INSTALL.INSTALL_STATE, V_RICHGO_MARKET_PRICE.SD 실값) |
+| 2 | 통합마트 테이블명 | `INTEGRATED_MART` (4곳: A3-3 600, A5-3 다이어그램 882, A5-3 코드 904, A7 마일스톤 976) | `MART_MOVE_ANALYSIS` (PR #41 머지 결과) |
+| 3 | SPH 커버리지 다수 위치 | "SPH 서울 전체 25개 구 467개 동" | "M_SCCO_MST 마스터 25구 / FACT(FLOATING/CARD/ASSET) MULTI_SOURCE 3구(중·영등포·서초)만" |
+| 4 | A3-3 통합마트 코드 | 동(DISTRICT_CODE) 단위 + YEAR_MONTH 변환 누락 | 구(CITY_CODE) 단위 + `TO_CHAR(YYYYMMDD,'YYYYMM')` + `MULTI_SOURCE_CITIES` 상수 + DATA_TIER 컬럼 (PR #41 동기화) |
+| 5 | 행정동/법정동 표기 | "467개 동" (행정동 암시) | "467개 법정동(BJD)" (M_SCCO_MST.DISTRICT_CODE 8자리는 BJD) |
+| 6 | A4-1 MOVE_SIGNAL_INDEX | 단일 산출식 (4종 가중합) | `CASE WHEN DATA_TIER='TELECOM_ONLY' THEN norm(OPEN_COUNT) WHEN 'MULTI_SOURCE' THEN 4종 융합 END` + 검증 기준에 샘플 한계 주석 |
+| 7 | A4-1 validate_move_signals | SPH FACT 직참조 (25구 가정) | `MART_MOVE_ANALYSIS.filter(DATA_TIER=='MULTI_SOURCE')` |
+| 8 | A5-1 MVP 학습 계획 | 단일 표 (XGBRegressor, MAPE<20%) | Track A(25구 경량 LinearRegression, MAPE<25%) + Track B(MULTI_SOURCE 3구 풀 Ridge α=1.0, MAPE<20%, **XGB 금지**) |
+| 9 | A5-3 학습 파이프라인 | `train_and_deploy()` + `random_split` | `train_track_a()` + `train_track_b()` + `walk_forward_split(train_months=28, test_months=6)` + 타겟 파생 `F.lead("OPEN_COUNT", 1)` + 서비스 2개 분리 |
+| 10 | A6 MVP vs 고도화 표 | 단일 모델/평가 | Track A/B 분리 (데이터 범위·핵심 모델·데이터 조인·평가 기준 행 수정) |
+| 11 | B3-0 UDF 커버리지 매트릭스 | 없음 | B3-1 직전 신규 서브섹션 삽입 (Tier별 UDF 동작 매트릭스) |
+| 12 | B3-1 PREDICT_MOVE_DEMAND | `district_code VARCHAR` 인자 + 단일 모델 | 인자명 `city_code` (5자리 CITY_CODE) rename + RETURNS에 `data_tier`/`confidence` 추가 + 내부 로직 0단계(Tier 감지) 추가 |
+| 13 | B3-2 CALC_ROI | RETURNS 단일 | `tier`/`confidence` 컬럼 추가 + Tier 분기 |
+| 14 | B3-3 GET_SEGMENT_PROFILE 허위 문장 | "필터: DISTRICT_CODE = district_code (서울 25개 구 모두 가능)" | "필터: CITY_CODE = city_code. SPH FACT는 MULTI_SOURCE 3구만 실존, TELECOM_ONLY 22구는 아정당 경량 프로필" |
+| 15 | C4 ROI 계산기 | 단일 로직 | Tier 배지 + `query_mart_tier()` 분기 + `get_apt_price_by_region()` empty fallback + 데이터 근거 Tier 경고 |
+| 16 | C3 세그먼트 분석 | "SPH 25개 구 전체" | "MULTI_SOURCE 3구 풀 / TELECOM_ONLY 22구 경량" |
+| 17 | C7 발표 스크립트 | "SPH 데이터로 25구 전체 분포" | "SPH FACT MULTI_SOURCE 3구 + TELECOM_ONLY 22구 경량" |
+| 18 | A8 디렉토리 매핑 | `train_and_deploy()`, XGBRegressor | `train_track_a/b()`, `walk_forward_split()` |
+| 19 | A6+A8 ML 모델 행 | XGBRegressor (MAPE<20%) | Track A LinearRegression / Track B Ridge α=1.0 |
+| 20 | 출처 SPH 설명 | "서울 전체 25개 구" | "마스터 25구 / FACT MULTI_SOURCE 3구" |
+
+**중복/이력 처리**:
+- 항목 2 (INTEGRATED_MART): 이슈 본문은 line 600만 명시했으나 882·904·976에도 잔존 → 4곳 모두 정정
+- 항목 14 (line 1491 B3-3 허위 문장): 이슈 본문 SPH 커버리지 라인 목록 누락 → #40 작업 시 추가 발견 후 정정
+- **#20 자기 정정 문구 보존**: 1165, 1193, 1523, 1779, 2342 등의 "기존 3개 구 한정 오류 수정됨" 문구는 2026-04-07 #20에서 잘못 25구로 회귀시킨 흔적. **삭제하지 않고** "→ 2026-04-08 #40 #21 Snowflake 검증으로 MULTI_SOURCE 3구로 재롤백" 형식으로 이력 보존
+
+**유지 항목** (정정 대상 아님):
+- line 134, 136 (#20 변경 이력 — 보존)
+- line 1230, 1238 (JSON 응답 예시 `province` 필드 — '서울특별시'는 풀네임 명시 의도)
+- line 1793, 1826 (Cortex Analyst YAML 컬럼 description "예: 서울특별시" — 컬럼 의미 설명)
+- line 898 (`XGBRegressor 금지` — 의도적 금지 명시)
+
+**후속 이슈 동기화 (Task #4)**:
+#40 작업 범위에 backlog 이슈 #22, #23, #25, #26, #28, #29, #42 body 정정 포함. 상세는 `.omc/research/snowflake-ground-truth.md` 섹션 9 참조.
+
+### 2026-04-07 — #20 (V_BJD_DISTRICT_MAP 매핑 뷰)
+
+(line 132~136 #20 변경 이력 참조 — 동/구 2단계 매핑 + SD 필터 수정)
