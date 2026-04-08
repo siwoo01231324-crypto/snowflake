@@ -48,9 +48,9 @@
 - 일반인이 생각하는 행정동(약 425개)과 다름
 
 ## 완료 기준
-- [ ] dev_spec.md 7개 오류 항목 모두 정정
-- [ ] 변경 이력 섹션에 #21 발견 내용 명시 (line 번호 + 변경 전/후)
-- [ ] 후속 이슈(#22~) 본문에 영향 없는지 확인 + 필요 시 동기화
+- [x] dev_spec.md 7개 오류 항목 모두 정정 (+ Dual-Tier 5건 + 잔여 8건 = 총 20건+)
+- [x] 변경 이력 섹션에 #21 발견 내용 명시 (line 번호 + 변경 전/후) — `## 변경 이력` 섹션 신설
+- [x] 후속 이슈(#22~) 본문에 영향 없는지 확인 + 필요 시 동기화 — 7개 이슈 body + 코멘트 동기화 완료
 
 ## 구현 플랜
 1. dev_spec.md를 1회 전체 읽고 7개 항목의 정확한 line 위치 재확인
@@ -70,7 +70,7 @@
 - 코드 체계 표현 시 '행정동/법정동' 명시
 
 ## 개발 체크리스트
-- [ ] docs/specs/.ai.md 최신화
+- [x] docs/specs/.ai.md 최신화 (v3 엔트리 + #40 흐름 요약)
 
 ## 작업 내역
 
@@ -86,3 +86,39 @@
 - docs/specs/.ai.md: 13줄, dev_spec 줄 수가 옛 값(2,711줄)으로 표기 — 갱신 필요
 - 01_plan.md: 12개 항목(7+5) 상세 플랜 완비, 그대로 실행 가능
 - 다음 단계: **구현 대기** — 항목별 정정 → 변경 이력 추가 → .ai.md 갱신 순서로 진입
+
+### 2026-04-08 — /finish-issue 완료 스냅샷
+
+**팀 운영**: 3-worker team (`fix-devspec-040`)
+- `ground-truth` (Snowflake 검증 + PR #41 코드 분석 + 후속 이슈 호환성 → `.omc/research/snowflake-ground-truth.md` 333줄 9 섹션)
+- `editor-early` (dev_spec line 1~1300 편집, Phase A-G)
+- `editor-late` (dev_spec line 1301~끝 편집, Phase H-K)
+- Lead: 변경 이력 + .ai.md v3 + 잔여 정정 + backlog 이슈 7개 동기화 + 검증 + 커밋 분리
+
+**정정 결과 (20건+)**:
+1~5 기본 7건 (#1~#7): 필터값, 테이블명, SPH Dual-Tier 롤백, A3-3 조인 단위, YEAR_MONTH 변환, 행정동→법정동, 이력 보존
+6~10 Dual-Tier 5건 (#8~#12): A4-1 CASE 분기, A5-1 Track A/B 분리, A5-3 walk_forward_split + train_track_a/b, B3-0 신규 매트릭스 + B3-1 city_code rename + B3-2/3 tier/confidence, C4 ROI Tier 분기 + fallback
+11~20 잔여 8건: A6 표 행, C3 세그먼트, C7 발표 스크립트, A8 디렉토리 매핑, 출처 섹션 등
+
+**dev_spec.md 변경**: 2,850 → 2,997 lines (+147), 299 insertions / 154 deletions
+**docs/specs/.ai.md**: v3 엔트리 추가
+
+**Backlog 이슈 동기화 (7건)**:
+- #22: TC 주석 + 불변식 Tier 명시
+- #23: `'서울특별시'` → `'서울'` 3곳
+- #25: `district_code` → `city_code` rename, TC `'11680'` → `'11140'`, AC Dual-Tier
+- #26: `V05_*` / `NX_*` → 실존 뷰명 통일 + 불변식 강화
+- #28: `YEAR_MONTH` DATE 캐스팅
+- #29: TC `'11680'` → `'11140'`, TELECOM_ONLY fallback TC 추가
+- #42: `465동` → `467개 법정동(BJD)`
+
+**검증 통과** (본문 잔존 0건, 변경 이력/JSON 예시/Cortex YAML/의도적 금지 명시만 허용):
+- `'서울특별시'`, `INTEGRATED_MART`, `25개 구 467개 동`, `25개 구 모두 가능`, `train_and_deploy`, `XGBRegressor` (정정 대상)
+
+**커밋 2개 on `refactor/000040-devspec-fix`**:
+- `ef80455` chore(work): #40 작업 내역 + 구현 플랜 기록 (#40)
+- `c3ebf5d` refactor(devspec): Snowflake 실데이터 검증 기반 dev_spec 12건+α 정정 + Dual-Tier 반영 (#40)
+
+**PR**: [siwoo01231324-crypto/snowflake#44](https://github.com/siwoo01231324-crypto/snowflake/pull/44)
+
+**Team 정리**: 3 워커 shutdown_response → TeamDelete 성공 → state_clear 완료
