@@ -667,7 +667,8 @@ WHERE t.INSTALL_STATE = '서울';
 
 | # | 시그널 | 데이터 소스 | 논리 (왜 이사와 상관?) | 단위 |
 |---|--------|-----------|----------------------|------|
-| S1 | **통신 신규설치** | 아정당 V05 `OPEN_COUNT` | 이사하면 인터넷/TV 신규 개통 | 시/군/구 × 월 |
+| S1 | **통신 신규 계약 접수** (선행) | 아정당 V05 `CONTRACT_COUNT` | 이사 예정자가 새집 인터넷·TV를 **사전 예약** → 실제 개통(OPEN)보다 **1개월 선행** (서울 25구 38개월 패널 r=0.895, p<0.001, `.omc/research/42-lead-time-verification.md` §H1·§H5) | 시/군/구 × 월 |
+| S1′ | **통신 실제 개통** (동행/직후) | 아정당 V05 `OPEN_COUNT` | 계약 후 1개월 내 실제 개통 완료 — 이사 시점의 확인 지표 | 시/군/구 × 월 |
 | S2 | **거주인구 변동** | SPH `RESIDENTIAL_POPULATION` (전월 대비 Δ) | 이사 유입 → 거주인구 증가 | 행정동 × 월 |
 | S3 | **신규 주택담보대출** | SPH `NEW_HOUSING_BALANCE_COUNT` | 이사 시 주택 매매/전세 대출 발생 | 행정동 × 월 |
 | S4 | **이사 관련 소비 급증** | SPH `ELECTRONICS_FURNITURE_SALES` (전월 대비 Δ) | 이사 후 가전/가구 구매 급증 | 행정동 × 월 |
@@ -676,18 +677,24 @@ WHERE t.INSTALL_STATE = '서울';
 
 ```
 -- DATA_TIER 기반 분기 (MART_MOVE_ANALYSIS.DATA_TIER 컬럼)
+-- 핵심: S1 선행지표는 CONTRACT_COUNT (계약 접수 시점, 이사 예정 행동)
+--      OPEN_COUNT 는 1개월 후행 확인 지표 (이사 완료 시점)
 MOVE_SIGNAL_INDEX =
   CASE
     WHEN DATA_TIER = 'TELECOM_ONLY' THEN
-        norm(OPEN_COUNT)                          -- S1만: 아정당 22구, SPH FACT 없음
+        norm(CONTRACT_COUNT)                      -- S1: 통신 신규 계약 (선행지표) — 22구 단일 시그널
     WHEN DATA_TIER = 'MULTI_SOURCE' THEN
-        w1 × norm(OPEN_COUNT)                     -- S1: 통신 신규설치 (선행지표)
+        w1 × norm(CONTRACT_COUNT)                 -- S1: 통신 신규 계약 접수 (선행지표, 1개월 lead)
       + w2 × norm(ΔRESIDENTIAL_POPULATION)        -- S2: 거주인구 전월 대비 변동
       + w3 × norm(NEW_HOUSING_BALANCE_COUNT)      -- S3: 신규 주택담보대출 건수
       + w4 × norm(ΔELECTRONICS_FURNITURE_SALES)   -- S4: 가전/가구 소비 전월 대비 변동
   END
 
 초기 가중치 (MULTI_SOURCE): w1=0.35, w2=0.25, w3=0.25, w4=0.15
+
+-- 검증 후행 지표 (동시 계산, 예측에 사용 X)
+VALIDATION_OPEN_LAG = OPEN_COUNT(t) -- CONTRACT_COUNT(t-1) 의 실현 확인
+CARRYOVER_RATIO     = (CONTRACT_COUNT - OPEN_COUNT) / CONTRACT_COUNT  -- 기대값 28~30% (서울 25구 정상 구간)
 ```
 
 - `norm()` = Min-Max 정규화 (0~1), 시군구 단위 집계 후 적용
@@ -713,11 +720,12 @@ def validate_move_signals(session):
     mart = session.table("MOVING_INTEL.ANALYTICS.MART_MOVE_ANALYSIS")
     mart_multi = mart.filter(F.col("DATA_TIER") == "MULTI_SOURCE")
 
-    # S1: 아정당 신규설치 (MULTI_SOURCE 구만)
+    # S1: 아정당 신규 계약(CONTRACT_COUNT) — 선행 시그널 (MULTI_SOURCE 구만)
+    # S1' OPEN_COUNT는 이사 당일 개통, 확인 지표로는 잔류하나 주 시그널은 CONTRACT (#42 2026-04-09)
     s1 = (
         mart_multi
-        .select("STANDARD_YEAR_MONTH", "CITY_CODE", "OPEN_COUNT")
-        .rename("OPEN_COUNT", "S1_NEW_INSTALL")
+        .select("STANDARD_YEAR_MONTH", "CITY_CODE", "CONTRACT_COUNT")
+        .rename("CONTRACT_COUNT", "S1_NEW_INSTALL")
         .to_pandas()
     )
     
@@ -1128,7 +1136,7 @@ def get_move_demand(district_code: str, start_month: str, end_month: str, segmen
 | `end_month` | string | Y | 조회 종료월 (`YYYYMM`, 예: `202606`) |
 | `segment` | string | N | 세그먼트 필터 (`high_income`, `family`, `single` 등) |
 
-> **[이사 프록시 추정]** 아정당 데이터에는 직접적인 이사추정건수 컬럼이 없다. V05_REGIONAL_NEW_INSTALL의 `OPEN_COUNT`(신규개통)와 V01_MONTHLY_REGIONAL_CONTRACT_STATS의 `CONTRACT_COUNT`를 이사 선행지표 프록시로 활용한다. 실제 이사 건수와의 상관관계는 검증 필요.
+> **[이사 프록시 검증 현황 — 2026-04-09 #42 업데이트]** 아정당 데이터에는 직접적인 이사 이벤트 컬럼이 없다. V05_REGIONAL_NEW_INSTALL 의 `CONTRACT_COUNT`(신규 계약 접수) 를 **주 선행지표**로, `OPEN_COUNT`(개통 완료) 를 후행 확인 지표로 사용한다. 서울 25구 × 38개월 패널 데이터(n=866)에서 CONTRACT → OPEN k=+1 lag Pearson r = 0.895 (p<0.001, n=841), carryover = 28~30% 로 구조적 1개월 선행 관계 실증됨 (`.omc/research/42-lead-time-verification.md` §H1·§H5). "실제 이사" ground truth 는 KOSIS 주민등록 인구이동(`DT_1B040A3`) 공식 통계와 교차검증 필요 — 1회성 검증은 #42 §H6, 자동 갱신 파이프라인은 백로그 이슈 #46 에서 처리.
 
 **내부 SQL 로직 (MVP)**
 
@@ -1406,8 +1414,9 @@ def predict_move_demand(city_code, start_month, end_month):
     내부 로직 개요:
     0. CITY_CODE 기반 DATA_TIER 감지 → Track A/B 모델 선택
     1. M_SCCO_MST에서 CITY_CODE → INSTALL_CITY 매핑
-    2. V05_REGIONAL_NEW_INSTALL에서 OPEN_COUNT 조회 (이사 프록시)
-       - OPEN_COUNT: 신규 통신 개통 = 이사 후 통신 재개설 선행지표
+    2. V05_REGIONAL_NEW_INSTALL에서 CONTRACT_COUNT (주 선행) + OPEN_COUNT (후행 확인) 조회
+       - CONTRACT_COUNT: 통신 신규 계약 접수 = 이사 예정 행동 선행지표 (1개월 lead, r=0.895 검증됨)
+       - OPEN_COUNT: 실제 개통 완료 = 이사 시점 동행·직후 확인 지표 (CONTRACT 대비 28~30% carryover)
     3. REGION_APT_RICHGO_MARKET_PRICE_M_H에서 아파트 시세 조회 (교차 검증용)
        - MEME_PRICE_PER_SUPPLY_PYEONG, JEONSE_PRICE_PER_SUPPLY_PYEONG, TOTAL_HOUSEHOLDS
     4. 시계열 모델(선형회귀 또는 Prophet)로 미래 월 예측
@@ -2987,6 +2996,40 @@ snowflake/
 
 **후속 이슈 동기화 (Task #4)**:
 #40 작업 범위에 backlog 이슈 #22, #23, #25, #26, #28, #29, #42 body 정정 포함. 상세는 `.omc/research/snowflake-ground-truth.md` 섹션 9 참조.
+
+### 2026-04-09 — #42 ("2-4주 선행" 가설 실데이터 검증 + S1 선행지표 재정의)
+
+**배경**: #42 발표 스토리 작성 중 whitepaper v1.0의 핵심 주장 **"이사 2~4주 전 예측"** 의 근거가 Snowflake 실데이터와 맞지 않음을 발견. 구체적으로 (a) whitepaper v1.0 이 가정한 "통신 주소변경" 컬럼이 실제 뷰 `V_TELECOM_NEW_INSTALL` 에 존재하지 않음, (b) dev_spec L1410 "OPEN_COUNT = 이사 후 통신 재개설 선행지표" 가 내부 모순 ("이사 후"이면 후행), (c) S1 선행지표를 `OPEN_COUNT` 로 쓰면 "선행" 주장이 성립 불가. 이에 실데이터 검증 후 dev_spec의 선행지표 정의를 재작성.
+
+**검증 출처**: `.omc/research/42-lead-time-verification.md` (서울 25구 × 38개월 패널, n=866 · CONTRACT→OPEN k=+1 r=0.895 p<0.001 n=841 · carryover 28~30% 정상 구간) + `.omc/research/42-public-data-sources.md` (KOSIS `DT_1B040A3` · 주민등록법 §16 · 국토부 실거래가 API)
+
+**핵심 정정 4건**:
+
+| # | 항목 | 변경 전 | 변경 후 |
+|---|------|---------|---------|
+| 1 | A4-1 S1 선행지표 컬럼 정의 (L666-673) | "S1 \| 통신 신규설치 \| V05 `OPEN_COUNT` \| 이사하면 인터넷/TV 신규 개통" | "S1 \| 통신 신규 **계약 접수** (선행) \| V05 `CONTRACT_COUNT` \| 이사 예정자 사전 예약, 실제 개통(OPEN)보다 1개월 선행 (r=0.895 검증)" + "S1′ \| 통신 실제 개통 (동행/직후) \| V05 `OPEN_COUNT`" 분리 신설 |
+| 2 | A4-1 MOVE_SIGNAL_INDEX 산출식 (L677-691) | `TELECOM_ONLY THEN norm(OPEN_COUNT)` · `MULTI_SOURCE THEN w1*norm(OPEN_COUNT) + ...` | `TELECOM_ONLY THEN norm(CONTRACT_COUNT)` · `MULTI_SOURCE THEN w1*norm(CONTRACT_COUNT) + ...` + `VALIDATION_OPEN_LAG` · `CARRYOVER_RATIO` 검증 후행 지표 신설 (예측에는 사용 X, 모니터링용) |
+| 3 | B3-1 PREDICT_MOVE_DEMAND 내부 주석 (L1408-1410) | "OPEN_COUNT: 신규 통신 개통 = **이사 후** 통신 재개설 **선행지표**" (모순) | "CONTRACT_COUNT: 통신 신규 계약 접수 = 이사 예정 행동 선행지표 (1개월 lead, r=0.895)" + "OPEN_COUNT: 실제 개통 완료 = 이사 시점 동행·직후 확인 지표 (carryover 28~30%)" |
+| 4 | B3-1 이사 프록시 추정 블록 (L1131) | "V05의 `OPEN_COUNT`(신규개통)와 V01의 `CONTRACT_COUNT`를 이사 선행지표 프록시로 활용. 실제 이사 건수와의 상관관계는 검증 필요." | "[이사 프록시 검증 현황 — 2026-04-09 #42]" 상태 블록으로 교체. CONTRACT→OPEN 1개월 선행 실증 완료(r=0.895 n=841), "실제 이사" ground truth 는 KOSIS `DT_1B040A3` 교차검증 필요 (#42 §H6 1회 / 백로그 #46 자동화) 명시 |
+
+**외부 공공 데이터 참조 추가**:
+- KOSIS 주민등록 인구이동 `DT_1B040A3` (공식 전입신고 ground truth, 백로그 #46)
+- 주민등록법 §16 (전입신고 이사 후 14일 이내, 법률 기준점)
+- 국토부 아파트 매매 실거래가 API `data.go.kr/data/15126469` (upper bound, 계약~잔금 2~3개월)
+
+**후속 이슈 영향**:
+- **#22 (MOVE_SIGNAL_INDEX 구현)**: S1 컬럼이 OPEN → CONTRACT 로 변경됨. 구현 시 본 변경 반영 필수. 테스트 TC 업데이트 필요.
+- **#23 (PREDICT_MOVE_DEMAND UDF)**: 내부 로직 2번 단계 주석 정정 (B3-1 L1408-1410). 기능 변경 없음.
+- **#46 (신규 backlog, 공공 데이터 파이프라인)**: KOSIS·국토부·서울열린데이터 자동 갱신 + 교차검증 SQL (2026-04-09 생성)
+
+**유지 항목** (정정 대상 아님):
+- Track A 피처 세트 (OPEN, CONTRACT, PAYEND 3종 모두) — Track A는 통합 시그널 상자
+- A5-1 MAPE 목표 (Track A < 25%, Track B < 20%) — 모델 성능 목표
+- B3-3 L1563 GET_SEGMENT_PROFILE 필터 설명 — #40 항목 14에서 이미 정정 완료
+- A4-1 validate_move_signals 함수 (L709-763) — 이미 `mart.filter(DATA_TIER=='MULTI_SOURCE')` 적용됨 (#40 항목 7)
+
+**발표 스토리 분리**:
+#42 작업 범위에 `docs/presentation/00_pitch_story.md` 신규 파일이 추가됨. 5분 데모 대본·Q&A 8건·5단계 검증 프레임워크·"2-4주 선행" 4중 증거 체인 이 포함된다. dev_spec 과는 상호 인용하되 **중복 금지** — dev_spec 은 기술 명세, pitch_story 는 발표 자료.
 
 ### 2026-04-07 — #20 (V_BJD_DISTRICT_MAP 매핑 뷰)
 

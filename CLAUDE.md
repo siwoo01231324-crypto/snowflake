@@ -46,7 +46,10 @@
 5. 실패 시 → "레포에 무엇이 없었나?" 진단 → 문서 업데이트
 
 ## 핵심 문서 위치
-- 기능 명세 + AC → `docs/specs/`
+- 기능 명세 + AC → `docs/specs/` (`dev_spec.md` 기술 명세 v3 Dual-Tier)
+- 발표 스토리·검증 프레임·Q&A → `docs/presentation/00_pitch_story.md` (#42)
+- 3구 권역 프로파일 (발표 카드) → `docs/presentation/01_district_profiles.md` (#43)
+- 사업 기획서·브랜딩 → `docs/whitepaper/` (v1.0 moving-intelligence, v1.1 branding-strategy)
 - 온보딩·워크플로우 → `docs/onboarding/`
 - 작업 내역 → `docs/work/active/` · `docs/work/done/`
 
