@@ -60,3 +60,6 @@ src/app/.streamlit/secrets.toml
 mentor_mentee_summary.md
 docs/specs/**/designs/*.png
 snowflake.log
+
+# ML venv
+ml_venv/
