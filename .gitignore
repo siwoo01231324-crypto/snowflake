@@ -52,6 +52,10 @@ Thumbs.db
 .idea/
 *.swp
 
+# 로컬 개발 전용 (자격증명 — 커밋 금지)
+src/app/.env
+src/app/.streamlit/secrets.toml
+
 # 개인정보 (커밋 금지)
 mentor_mentee_summary.md
 docs/specs/**/designs/*.png
