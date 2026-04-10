@@ -22,6 +22,98 @@ def _compute_color(signal: int, max_signal: int) -> list[int]:
     return [r, g, b, 210]
 
 
+def _extract_rings(geom: dict) -> list[list]:
+    gtype = geom.get("type", "")
+    if gtype == "Polygon":
+        return [geom["coordinates"][0]]
+    if gtype == "MultiPolygon":
+        return [coords[0] for coords in geom["coordinates"]]
+    if gtype == "GeometryCollection":
+        rings = []
+        for sub in geom.get("geometries", []):
+            rings.extend(_extract_rings(sub))
+        return rings
+    return []
+
+
+def _extract_paths(geom: dict) -> list[list]:
+    gtype = geom.get("type", "")
+    if gtype == "LineString":
+        return [geom["coordinates"]]
+    if gtype == "MultiLineString":
+        return geom["coordinates"]
+    if gtype == "Polygon":
+        return [geom["coordinates"][0]]
+    if gtype == "MultiPolygon":
+        return [c[0] for c in geom["coordinates"]]
+    if gtype == "GeometryCollection":
+        paths = []
+        for sub in geom.get("geometries", []):
+            paths.extend(_extract_paths(sub))
+        return paths
+    return []
+
+
+@st.cache_data(ttl=3600)
+def _load_months(_session) -> list[str]:
+    """연월 목록 — 당월 포함, 최근 24개월. (#2 DATEADD 조건 제거)"""
+    df = _session.sql(
+        """
+        SELECT DISTINCT TO_CHAR(YEAR_MONTH, 'YYYY-MM') AS YM
+        FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
+        WHERE YEAR_MONTH <= DATE_TRUNC('month', CURRENT_DATE())
+        ORDER BY 1 DESC
+        LIMIT 24
+        """
+    ).to_pandas()
+    return df["YM"].tolist() if not df.empty else []
+
+
+@st.cache_data(ttl=3600)
+def _load_gu_boundaries(_session) -> list[dict]:
+    """구 경계선 PathLayer 데이터 — V_SPH_REGION_MASTER 우선, 실패 시 M_SCCO_MST fallback. (#1 #6)"""
+
+    def _parse(gu_df) -> list[dict]:
+        result: list[dict] = []
+        for _, row in gu_df.iterrows():
+            if not row["GU_GEOJSON"]:
+                continue
+            try:
+                geom = json.loads(row["GU_GEOJSON"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for path in _extract_paths(geom):
+                result.append({"path": path, "gu": row["CITY_KOR_NAME"]})
+        return result
+
+    _SQL_PRIMARY = """
+        SELECT CITY_KOR_NAME, CITY_CODE,
+               ST_ASGEOJSON(ST_UNION_AGG(DISTRICT_GEOM)) AS GU_GEOJSON
+        FROM MOVING_INTEL.ANALYTICS.V_SPH_REGION_MASTER
+        WHERE PROVINCE_CODE = '11'
+        GROUP BY CITY_KOR_NAME, CITY_CODE
+    """
+    _SQL_FALLBACK = """
+        SELECT CITY_KOR_NAME, CITY_CODE,
+               ST_ASGEOJSON(ST_UNION_AGG(DISTRICT_GEOM)) AS GU_GEOJSON
+        FROM SEOUL_DISTRICTLEVEL_DATA_FLOATING_POPULATION_CONSUMPTION_AND_ASSETS.GRANDATA.M_SCCO_MST
+        WHERE PROVINCE_CODE = '11'
+        GROUP BY CITY_KOR_NAME, CITY_CODE
+    """
+
+    try:
+        data = _parse(_session.sql(_SQL_PRIMARY).to_pandas())
+        if data:
+            return data
+    except Exception:
+        pass
+
+    try:
+        return _parse(_session.sql(_SQL_FALLBACK).to_pandas())
+    except Exception:
+        return []
+
+
 def render_heatmap(session) -> None:
     st.header("서울 이사 수요 히트맵")
     st.caption(
@@ -33,16 +125,7 @@ def render_heatmap(session) -> None:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        months_df = session.sql(
-            """
-            SELECT DISTINCT TO_CHAR(YEAR_MONTH, 'YYYY-MM') AS YM
-            FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
-            WHERE YEAR_MONTH <= DATEADD('month', -1, DATE_TRUNC('month', CURRENT_DATE()))
-            ORDER BY 1 DESC
-            LIMIT 24
-            """
-        ).to_pandas()
-        ym_list = months_df["YM"].tolist() if not months_df.empty else []
+        ym_list = _load_months(session)
         selected_month = st.selectbox("기준 연월", ym_list)
 
     with col2:
@@ -81,6 +164,7 @@ def render_heatmap(session) -> None:
                    MAX({signal_col}) AS {signal_col}
             FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
             WHERE TO_CHAR(YEAR_MONTH, 'YYYY-MM') = ?
+              AND INSTALL_STATE = '서울'
             GROUP BY INSTALL_CITY
         ) t ON m.CITY_KOR_NAME = t.INSTALL_CITY
         LEFT JOIN (
@@ -97,19 +181,6 @@ def render_heatmap(session) -> None:
         return
 
     # ── 폴리곤 데이터 조립 ───────────────────────────────────────────────────
-    def _extract_rings(geom: dict) -> list[list]:
-        gtype = geom.get("type", "")
-        if gtype == "Polygon":
-            return [geom["coordinates"][0]]
-        if gtype == "MultiPolygon":
-            return [coords[0] for coords in geom["coordinates"]]
-        if gtype == "GeometryCollection":
-            rings = []
-            for sub in geom.get("geometries", []):
-                rings.extend(_extract_rings(sub))
-            return rings
-        return []
-
     polygon_data: list[dict] = []
     for _, row in df.iterrows():
         if not row["GEOJSON"]:
@@ -141,48 +212,8 @@ def render_heatmap(session) -> None:
     for d in polygon_data:
         d["fill_color"] = _compute_color(d["signal"], max_signal)
 
-    # ── 구 경계선 데이터 로드 ─────────────────────────────────────────────────
-    # ST_UNION_AGG로 행정동 폴리곤을 구 단위로 합산 → GeometryCollection(LineStrings)
-    def _extract_paths(geom: dict) -> list[list]:
-        gtype = geom.get("type", "")
-        if gtype == "LineString":
-            return [geom["coordinates"]]
-        if gtype == "MultiLineString":
-            return geom["coordinates"]
-        if gtype == "Polygon":
-            return [geom["coordinates"][0]]
-        if gtype == "MultiPolygon":
-            return [c[0] for c in geom["coordinates"]]
-        if gtype == "GeometryCollection":
-            paths = []
-            for sub in geom.get("geometries", []):
-                paths.extend(_extract_paths(sub))
-            return paths
-        return []
-
-    try:
-        gu_df = session.sql(
-            """
-            SELECT CITY_KOR_NAME, CITY_CODE,
-                   ST_ASGEOJSON(ST_UNION_AGG(DISTRICT_GEOM)) AS GU_GEOJSON
-            FROM MOVING_INTEL.ANALYTICS.V_SPH_REGION_MASTER
-            WHERE PROVINCE_CODE = '11'
-            GROUP BY CITY_KOR_NAME, CITY_CODE
-            """
-        ).to_pandas()
-
-        boundary_data: list[dict] = []
-        for _, row in gu_df.iterrows():
-            if not row["GU_GEOJSON"]:
-                continue
-            try:
-                geom = json.loads(row["GU_GEOJSON"])
-            except (json.JSONDecodeError, TypeError):
-                continue
-            for path in _extract_paths(geom):
-                boundary_data.append({"path": path, "gu": row["CITY_KOR_NAME"]})
-    except Exception:
-        boundary_data = []
+    # ── 구 경계선 데이터 로드 (캐싱) ─────────────────────────────────────────
+    boundary_data = _load_gu_boundaries(session)
 
     # ── pydeck PolygonLayer ─────────────────────────────────────────────────
     # stroked=False → 행정동 경계선 숨김 → 같은 구는 하나의 덩어리처럼 보임
