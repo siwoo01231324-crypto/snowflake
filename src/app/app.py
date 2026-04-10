@@ -25,4 +25,5 @@ with tab2:
     st.info("세그먼트 · ROI 탭은 이슈 #29에서 구현됩니다.")
 
 with tab3:
-    st.info("Cortex AI 탭은 이슈 #27/#26 구현 후 연동됩니다.")
+    from tabs.cortex_ai import render_cortex_ai
+    render_cortex_ai(session)

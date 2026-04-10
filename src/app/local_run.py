@@ -8,6 +8,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Python 3.14 _wmi 모듈이 WMI COM 쿼리에서 무한 대기하는 버그 우회
+import platform as _platform
+_platform._wmi = None
+
 # .env 파일 로드
 _env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(_env_path):
@@ -83,6 +87,32 @@ class _Session:
 
 _session = _Session()
 
+# _snowflake 스텁 — SiS 전용 모듈을 로컬에서 에뮬레이션
+# send_snow_api_request: 기존 connector 세션 토큰으로 Cortex REST API 직접 호출
+import types as _types_sf
+import requests as _requests
+
+def _send_snow_api_request(method, path, _h, _p, body, _e, timeout_ms):
+    conn = _get_conn()
+    token = conn._rest._token
+    account = conn.account
+    url = f"https://{account}.snowflakecomputing.com{path}"
+    resp = _requests.request(
+        method, url,
+        headers={
+            "Authorization": f'Snowflake Token="{token}"',
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        json=body,
+        timeout=timeout_ms / 1000,
+    )
+    return {"status": resp.status_code, "content": resp.text}
+
+_sf_stub = _types_sf.ModuleType("_snowflake")
+_sf_stub.send_snow_api_request = _send_snow_api_request
+sys.modules["_snowflake"] = _sf_stub
+
 # snowflake.snowpark 스텁 (Python 3.14 환경 — snowpark 미지원)
 import sys as _sys
 import types as _types
@@ -102,10 +132,14 @@ if "snowflake.snowpark" not in _sys.modules:
 import streamlit as st
 from tabs.heatmap import render_heatmap
 from tabs.segment_roi import render_segment_roi
+from tabs.cortex_ai import render_cortex_ai
 
 st.set_page_config(page_title="이사 수요 인텔리전스", layout="wide")
 st.title("Moving Intelligence Dashboard")
-st.caption("서울 25구 이사 수요 예측 · Dual-Tier 분석")
+st.caption(
+    "**이번 달 이사 시그널 → 다음 달 수요 예측** · "
+    "통신 신규개통·계약 선행지표 기반 서울 25구 이사 수요 예측 플랫폼 · Dual-Tier 분석"
+)
 
 tab1, tab2, tab3 = st.tabs(["이사 수요 히트맵", "세그먼트 · ROI", "Cortex AI 분석"])
 
@@ -116,4 +150,4 @@ with tab2:
     render_segment_roi(_session)
 
 with tab3:
-    st.info("Cortex AI 분석 탭은 이슈 #27 구현 후 연동됩니다.")
+    render_cortex_ai(_session)
