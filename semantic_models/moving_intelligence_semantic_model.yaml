@@ -10,121 +10,152 @@ tables:
   # === 이사 수요 예측 (핵심) ===
   - name: v_telecom_new_install
     description: >
-      아정당 통신 신규개통 기반 이사 프록시 데이터.
+      통신 신규개통 기반 이사 프록시 데이터.
       OPEN_COUNT(신규개통)를 이사 후 통신 재개설의 선행지표로 활용.
-      서울 25개 구 월별 집계. [추정] 실제 이사 건수와의 상관관계는 검증 필요.
-    base_table: MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
+      서울 25개 구 월별 집계.
+    base_table:
+      database: MOVING_INTEL
+      schema: ANALYTICS
+      table: V_TELECOM_NEW_INSTALL
     dimensions:
       - name: install_state
-        description: "설치 시도명 (예: 서울특별시)"
+        description: "설치 시도명 (예: 서울)"
         expr: INSTALL_STATE
+        data_type: TEXT
       - name: install_city
         description: "설치 시군구명 (예: 서초구)"
         expr: INSTALL_CITY
+        data_type: TEXT
       - name: year_month
-        description: "이사 신호 발생 월 (DATE 타입)"
+        description: "이사 신호 발생 월"
         expr: YEAR_MONTH
+        data_type: DATE
     measures:
       - name: open_count
-        description: "신규개통 건수 — 이사 후 통신 재개설 프록시 [추정]"
-        expr: SUM(OPEN_COUNT)
+        description: "신규개통 건수 — 이사 후 통신 재개설 프록시"
+        expr: OPEN_COUNT
+        data_type: NUMBER
         default_aggregation: sum
       - name: contract_count
         description: "총 계약 건수"
-        expr: SUM(CONTRACT_COUNT)
+        expr: CONTRACT_COUNT
+        data_type: NUMBER
         default_aggregation: sum
       - name: bundle_count
         description: "결합 상품 계약 건수"
-        expr: SUM(BUNDLE_COUNT)
+        expr: BUNDLE_COUNT
+        data_type: NUMBER
         default_aggregation: sum
       - name: avg_net_sales
         description: "평균 순매출 (원)"
-        expr: AVG(AVG_NET_SALES)
+        expr: AVG_NET_SALES
+        data_type: NUMBER
         default_aggregation: avg
 
   # === 아파트 시세 (부동산) ===
   - name: v_richgo_market_price
     description: >
       RICHGO 아파트 시세 데이터. 서울 지역 아파트 평당 매매가/전세가.
-      2012-01~2024-12, 4,356건. BJD_CODE(법정동코드) 기준.
-    base_table: MOVING_INTEL.ANALYTICS.V_RICHGO_MARKET_PRICE
+      2012-01~2024-12. BJD_CODE(법정동코드) 기준.
+    base_table:
+      database: MOVING_INTEL
+      schema: ANALYTICS
+      table: V_RICHGO_MARKET_PRICE
     dimensions:
       - name: bjd_code
         description: "법정동 코드 (10자리)"
         expr: BJD_CODE
+        data_type: TEXT
       - name: sd
-        description: "시도명 (예: 서울특별시)"
+        description: "시도명 (예: 서울)"
         expr: SD
+        data_type: TEXT
       - name: sgg
         description: "시군구명 (예: 서초구)"
         expr: SGG
+        data_type: TEXT
       - name: emd
         description: "읍면동명 (예: 서초동)"
         expr: EMD
+        data_type: TEXT
       - name: price_month
         description: "시세 기준 월 (YYYYMMDD 형식)"
         expr: YYYYMMDD
+        data_type: TEXT
     measures:
       - name: meme_price_per_supply_pyeong
         description: "평당 매매가 (공급면적 기준, 원)"
-        expr: AVG(MEME_PRICE_PER_SUPPLY_PYEONG)
+        expr: MEME_PRICE_PER_SUPPLY_PYEONG
+        data_type: NUMBER
         default_aggregation: avg
       - name: jeonse_price_per_supply_pyeong
         description: "평당 전세가 (공급면적 기준, 원)"
-        expr: AVG(JEONSE_PRICE_PER_SUPPLY_PYEONG)
+        expr: JEONSE_PRICE_PER_SUPPLY_PYEONG
+        data_type: NUMBER
         default_aggregation: avg
       - name: total_households
         description: "총 세대수"
-        expr: SUM(TOTAL_HOUSEHOLDS)
+        expr: TOTAL_HOUSEHOLDS
+        data_type: NUMBER
         default_aggregation: sum
 
   # === 유동인구 (지역 생활 빅데이터) ===
   - name: v_sph_floating_pop
     description: >
-      SPH 유동인구 데이터. FACT는 3개 구(중구·영등포구·서초구) 한정.
-      2021-01~2025-12. DISTRICT_CODE(8자리) 기준.
-      WEEKDAY_WEEKEND·TIME_SLOT 포함으로 중복 집계 방지 필수.
-    base_table: MOVING_INTEL.ANALYTICS.V_SPH_FLOATING_POP
+      SPH 유동인구 데이터. 3개 구(중구·영등포구·서초구) 한정.
+      2021-01~2025-12. WEEKDAY_WEEKEND·TIME_SLOT 포함으로 중복 집계 방지 필수.
+    base_table:
+      database: MOVING_INTEL
+      schema: ANALYTICS
+      table: V_SPH_FLOATING_POP
     dimensions:
+      - name: province_code
+        description: "시도 코드 (2자리, 서울=11)"
+        expr: PROVINCE_CODE
+        data_type: TEXT
       - name: city_code
-        description: "시군구 코드 (5자리)"
+        description: "시군구 코드 (5자리, 영등포구=11560, 서초구=11650, 중구=11140)"
         expr: CITY_CODE
+        data_type: TEXT
       - name: district_code
         description: "행정동 코드 (8자리)"
         expr: DISTRICT_CODE
-      - name: district_kor_name
-        description: "행정동 한국어명 (예: 여의동)"
-        expr: DISTRICT_KOR_NAME
-      - name: city_kor_name
-        description: "시군구 한국어명 (예: 영등포구)"
-        expr: CITY_KOR_NAME
+        data_type: TEXT
       - name: standard_year_month
         description: "기준 연월 (YYYYMM 형식)"
         expr: STANDARD_YEAR_MONTH
+        data_type: TEXT
       - name: gender
         description: "성별 코드 (1=남성, 2=여성)"
         expr: GENDER
+        data_type: TEXT
       - name: age_group
         description: "연령대 코드 (10대~60대 이상)"
         expr: AGE_GROUP
+        data_type: TEXT
       - name: weekday_weekend
-        description: "평일/주말 구분 (1=평일, 2=주말). 중복 집계 방지를 위해 필터 권장."
+        description: "평일/휴일 구분 (W=평일, H=휴일)"
         expr: WEEKDAY_WEEKEND
+        data_type: TEXT
       - name: time_slot
-        description: "시간대 코드 (3자리, 예: 000=전체, 001=00~01시). 중복 집계 방지를 위해 전체(000) 또는 특정 시간대 필터 권장."
+        description: "시간대 코드 (T01~T24, 예: T09=09시)"
         expr: TIME_SLOT
+        data_type: TEXT
     measures:
       - name: residential_population
-        description: "거주인구 (일 평균). WEEKDAY_WEEKEND=1, TIME_SLOT=000 기준 조회 권장."
-        expr: SUM(RESIDENTIAL_POPULATION)
+        description: "거주인구 (일 평균)"
+        expr: RESIDENTIAL_POPULATION
+        data_type: NUMBER
         default_aggregation: sum
       - name: working_population
-        description: "직장인구 (일 평균). WEEKDAY_WEEKEND=1, TIME_SLOT=000 기준 조회 권장."
-        expr: SUM(WORKING_POPULATION)
+        description: "직장인구 (일 평균)"
+        expr: WORKING_POPULATION
+        data_type: NUMBER
         default_aggregation: sum
       - name: visiting_population
-        description: "방문인구 (일 평균). WEEKDAY_WEEKEND=1, TIME_SLOT=000 기준 조회 권장."
-        expr: SUM(VISITING_POPULATION)
+        description: "방문인구 (일 평균)"
+        expr: VISITING_POPULATION
+        data_type: NUMBER
         default_aggregation: sum
 
   # === 주식 시장 (건설/리츠 섹터) ===
@@ -132,50 +163,62 @@ tables:
     description: >
       NextTrade 주식 체결가 데이터. 건설/리츠/소비재 섹터 집중.
       이사 수요 증가 지역의 건설주·리츠 상관 분석에 활용.
-    base_table: MOVING_INTEL.ANALYTICS.V_NEXTTRADE_PRICE
+    base_table:
+      database: MOVING_INTEL
+      schema: ANALYTICS
+      table: V_NEXTTRADE_PRICE
     dimensions:
       - name: isu_cd
         description: "종목코드 (ISIN 12자리)"
         expr: ISU_CD
+        data_type: TEXT
       - name: dwdd
         description: "거래일자 (YYYYMMDD)"
         expr: DWDD
+        data_type: TEXT
       - name: mkt_id
         description: "시장구분 코드 (KOSPI/KOSDAQ 등)"
         expr: MKT_ID
+        data_type: TEXT
     measures:
       - name: td_prc
         description: "당일 체결가 (원)"
-        expr: AVG(TD_PRC)
+        expr: TD_PRC
+        data_type: NUMBER
         default_aggregation: avg
       - name: trd_qty
         description: "거래량"
-        expr: SUM(TRD_QTY)
+        expr: TRD_QTY
+        data_type: NUMBER
         default_aggregation: sum
       - name: acc_trval
         description: "누적거래대금 (원)"
-        expr: SUM(ACC_TRVAL)
+        expr: ACC_TRVAL
+        data_type: NUMBER
         default_aggregation: sum
       - name: prdy_cmp_prc
         description: "전일대비 가격 변동 (원)"
-        expr: AVG(PRDY_CMP_PRC)
+        expr: PRDY_CMP_PRC
+        data_type: NUMBER
         default_aggregation: avg
 
 verified_queries:
-  - question: "서울에서 이사 수요가 가장 높은 구는?"
+  - name: top_move_demand_districts
+    question: "서울에서 이사 수요가 가장 높은 구는?"
     sql: >
       SELECT
         INSTALL_CITY,
         SUM(OPEN_COUNT) AS total_open_count,
         SUM(CONTRACT_COUNT) AS total_contracts
       FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
-      WHERE INSTALL_STATE = '서울특별시'
+      WHERE INSTALL_STATE = '서울'
         AND YEAR_MONTH >= DATEADD(MONTH, -12, CURRENT_DATE())
       GROUP BY INSTALL_CITY
       ORDER BY total_open_count DESC
       LIMIT 10
 
-  - question: "강남구 아파트 평균 시세는?"
+  - name: gangnam_apartment_price
+    question: "강남구 아파트 평균 시세는?"
     sql: >
       SELECT
         YYYYMMDD AS price_month,
@@ -189,23 +232,26 @@ verified_queries:
       ORDER BY YYYYMMDD DESC
       LIMIT 24
 
-  - question: "영등포구 유동인구 시간대별 현황은?"
+  - name: yeongdeungpo_floating_pop_by_timeslot
+    question: "영등포구 유동인구 시간대별 현황은?"
     sql: >
       SELECT
         TIME_SLOT,
         STANDARD_YEAR_MONTH,
         SUM(RESIDENTIAL_POPULATION) AS residential_pop,
         SUM(WORKING_POPULATION) AS working_pop,
-        SUM(VISITING_POPULATION) AS visiting_pop,
-        SUM(RESIDENTIAL_POPULATION + WORKING_POPULATION + VISITING_POPULATION) AS total_pop
+        SUM(VISITING_POPULATION) AS visiting_pop
       FROM MOVING_INTEL.ANALYTICS.V_SPH_FLOATING_POP
-      WHERE CITY_KOR_NAME = '영등포구'
-        AND WEEKDAY_WEEKEND = 1
-        AND STANDARD_YEAR_MONTH >= TO_CHAR(DATEADD(MONTH, -3, CURRENT_DATE()), 'YYYYMM')
+      WHERE CITY_CODE = '11560'
+        AND WEEKDAY_WEEKEND = 'W'
+        AND STANDARD_YEAR_MONTH = (
+          SELECT MAX(STANDARD_YEAR_MONTH) FROM MOVING_INTEL.ANALYTICS.V_SPH_FLOATING_POP
+        )
       GROUP BY TIME_SLOT, STANDARD_YEAR_MONTH
       ORDER BY STANDARD_YEAR_MONTH DESC, TIME_SLOT
 
-  - question: "최근 3개월 건설주 평균 체결가 추이는?"
+  - name: construction_stock_price_trend
+    question: "최근 3개월 건설주 평균 체결가 추이는?"
     sql: >
       SELECT
         DWDD,
@@ -219,13 +265,13 @@ verified_queries:
       ORDER BY DWDD DESC, total_volume DESC
       LIMIT 100
 
-  - question: "서초구 월별 이사 수요 추이 (최근 12개월)"
+  - name: seocho_monthly_move_trend
+    question: "서초구 월별 이사 수요 추이 (최근 12개월)"
     sql: >
       SELECT
         YEAR_MONTH,
         SUM(OPEN_COUNT) AS move_proxy_count,
-        SUM(CONTRACT_COUNT) AS total_contracts,
-        RATIO_TO_REPORT(SUM(OPEN_COUNT)) OVER () AS ratio
+        SUM(CONTRACT_COUNT) AS total_contracts
       FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
       WHERE INSTALL_CITY = '서초구'
         AND YEAR_MONTH >= DATEADD(MONTH, -12, CURRENT_DATE())
