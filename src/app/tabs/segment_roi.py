@@ -47,12 +47,40 @@ _SEOUL_DISTRICTS = {
 
 _PERIOD_MONTHS = 22
 
+
+@st.cache_data(ttl=3600)
+def _load_ym_options(_session) -> list[str]:
+    """연월 목록 — 당월 포함, 최근 24개월. (#2 #6)"""
+    _current_ym = datetime.date.today().strftime("%Y%m")
+    try:
+        df = _session.sql(
+            """SELECT DISTINCT TO_CHAR(YEAR_MONTH, 'YYYYMM') AS YM
+               FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
+               ORDER BY 1 DESC LIMIT 24"""
+        ).to_pandas()
+        raw = df["YM"].tolist() if not df.empty else ["202412"]
+        return [str(v) for v in raw if str(v) <= _current_ym] or ["202412"]
+    except Exception:
+        return ["202504", "202503", "202502", "202501",
+                "202412", "202411", "202410", "202409"]
+
 _CVR  = {"ELECTRONICS_FURNITURE": 0.050, "FOOD": 0.040, "HOME_LIFE_SERVICE": 0.045,
           "FASHION_BEAUTY": 0.025, "LEISURE": 0.020}
 _LTV  = {"ELECTRONICS_FURNITURE": 500_000, "FOOD": 200_000, "HOME_LIFE_SERVICE": 150_000,
           "FASHION_BEAUTY": 80_000, "LEISURE": 60_000}
 _CPC  = 500
 _FREQ = 3
+
+# CALC_ROI UDF 동일 전환율 (calc_roi.sql 기준)
+_CVR_UDF = {
+    "ELECTRONICS_FURNITURE": 0.018,
+    "FOOD":                  0.030,
+    "FASHION_BEAUTY":        0.015,  # BEAUTY 매핑
+    "HOME_LIFE_SERVICE":     0.025,  # 홈·생활서비스 상향 (이사가구 83% 홈개선 추진, PGM Solutions)
+    "LEISURE":               0.015,  # SPORTS_CULTURE_LEISURE 매핑
+}
+_MOVE_TRIGGER = 3.0   # 이사 트리거 캠페인 승수
+_BASE_CVR     = 0.01  # 기준 전환율
 
 
 # ── 포매팅 헬퍼 ──────────────────────────────────────────────────────────────
@@ -95,7 +123,12 @@ def _pct(v, already_pct: bool = False) -> str:
 # ── 기회 데이터 로드 ─────────────────────────────────────────────────────────
 
 def _load_opportunity_data(session, industry_code: str, budget: int, year_month: str) -> pd.DataFrame | None:
-    """25구 이사 수요 + ROI 계산 → DataFrame."""
+    """25구 이사 수요 + CALC_ROI 동일 공식(배치) → DataFrame.
+
+    CALC_ROI UDF는 서브쿼리 제약으로 배치 호출 불가 → 동일 공식을 Python으로 재현:
+      estimated_revenue = budget × 3.0 × (cvr / 0.01) × demand_weight
+      demand_weight = MART_MOVE_ANALYSIS.MOVE_SIGNAL_INDEX 최근 3개월 평균
+    """
     try:
         rows = session.sql(
             """
@@ -109,15 +142,25 @@ def _load_opportunity_data(session, industry_code: str, budget: int, year_month:
                        SUM(CONTRACT_COUNT) AS AVG_MOVERS
                 FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
                 WHERE TO_CHAR(YEAR_MONTH, 'YYYYMM') = ?
+                  AND INSTALL_STATE = '서울'
+                GROUP BY INSTALL_CITY
+            ),
+            gu_avg_fallback AS (
+                SELECT INSTALL_CITY,
+                       ROUND(AVG(CONTRACT_COUNT)) AS AVG_MOVERS
+                FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
+                WHERE INSTALL_STATE = '서울'
                 GROUP BY INSTALL_CITY
             )
             SELECT DISTINCT
                    r.CITY_KOR_NAME,
-                   COALESCE(gr.ML_RANK, 25)     AS ML_RANK,
-                   COALESCE(gm.AVG_MOVERS, 500) AS AVG_MOVERS
+                   r.CITY_CODE,
+                   COALESCE(gr.ML_RANK, 25)                      AS ML_RANK,
+                   COALESCE(gm.AVG_MOVERS, gaf.AVG_MOVERS, 500) AS AVG_MOVERS
             FROM MOVING_INTEL.ANALYTICS.V_SPH_REGION_MASTER r
-            LEFT JOIN gu_rank   gr ON r.CITY_KOR_NAME = gr.CITY_KOR_NAME
-            LEFT JOIN gu_movers gm ON r.CITY_KOR_NAME = gm.INSTALL_CITY
+            LEFT JOIN gu_rank         gr  ON r.CITY_KOR_NAME = gr.CITY_KOR_NAME
+            LEFT JOIN gu_movers       gm  ON r.CITY_KOR_NAME = gm.INSTALL_CITY
+            LEFT JOIN gu_avg_fallback gaf ON r.CITY_KOR_NAME = gaf.INSTALL_CITY
             WHERE r.PROVINCE_CODE = '11'
             """,
             params=[year_month],
@@ -126,17 +169,22 @@ def _load_opportunity_data(session, industry_code: str, budget: int, year_month:
         st.error(f"데이터 조회 오류: {e}")
         return None
 
-    cvr = _CVR.get(industry_code, 0.030)
-    ltv = _LTV.get(industry_code, 100_000)
+    cvr = _CVR_UDF.get(industry_code, 0.010)
+
+    # MOVE_SIGNAL_INDEX는 전국 동명 구 집계 오염 가능성 → AVG_MOVERS(V_TELECOM 서울 필터)로 정규화
+    max_movers = max((float(r["AVG_MOVERS"] or 0) for r in rows), default=1) or 1
 
     records = []
     for r in rows:
-        avg_movers     = float(r["AVG_MOVERS"] or 500)
-        ml_rank        = int(r["ML_RANK"] or 25)
-        movers_reached = min(budget / (_CPC * _FREQ), avg_movers)
-        est_rev        = movers_reached * cvr * ltv
-        roi_pct        = (est_rev - budget) / budget * 100 if budget else 0
-        demand_score   = (26 - ml_rank) / 25 * 100   # 0~100
+        avg_movers    = float(r["AVG_MOVERS"] or 500)
+        ml_rank       = int(r["ML_RANK"] or 25)
+        demand_weight = avg_movers / max_movers  # 0~1 정규화, 서울 필터 적용된 실데이터 기준
+        demand_score  = (26 - ml_rank) / 25 * 100
+
+        # CALC_ROI 동일 공식
+        est_rev = budget * _MOVE_TRIGGER * (cvr / _BASE_CVR) * demand_weight
+        roi_pct = (est_rev - budget) / budget * 100 if budget else 0
+
         records.append({
             "구":         r["CITY_KOR_NAME"],
             "ml_rank":    ml_rank,
@@ -169,7 +217,7 @@ def _render_scatter(df: pd.DataFrame, industry_label: str, budget_만: int) -> N
     hover = [
         f"<b>{row['구']}</b><br>"
         f"이사 수요 점수: {row['demand']:.0f}점 (ML 순위 {row['ml_rank']}위)<br>"
-        f"예상 ROI: {row['roi_pct']:.0f}%<br>"
+        f"추정 ROI: {row['roi_pct']:.0f}%<br>"
         f"월평균 이사: {row['avg_movers']:,}건<br>"
         f"예상 유발 매출: {_won(row['est_rev'])}<br>"
         f"<b>기회 점수: {row['opportunity']:.1f}</b>"
@@ -205,24 +253,37 @@ def _render_scatter(df: pd.DataFrame, industry_label: str, budget_만: int) -> N
         hoverinfo="text",
     ))
 
+    _axis_style = dict(
+        title_font=dict(color="#222"),
+        tickfont=dict(color="#444"),
+        linecolor="#ccc",
+        gridcolor="#eee",
+    )
     fig.update_layout(
         title=dict(
             text=f"이사 수요 × 마케팅 ROI — <b>{industry_label}</b> · 예산 {budget_만:,}만원",
-            font=dict(size=14),
+            font=dict(size=14, color="#111"),
         ),
-        xaxis=dict(title="이사 수요 점수 (ML 순위 기반, 높을수록 이사 많음)", range=[0, 105]),
-        yaxis=dict(title="예상 ROI (%)"),
+        xaxis=dict(title="이사 수요 점수 (ML 순위 기반, 높을수록 이사 많음)", range=[0, 105],
+                   **_axis_style),
+        yaxis=dict(title="추정 ROI (%)", **_axis_style),
         height=480,
         margin=dict(l=40, r=20, t=60, b=40),
         plot_bgcolor="white",
         paper_bgcolor="white",
         showlegend=False,
+        font=dict(color="#222"),
     )
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
         "🔴 상위 3구 (최우선 타겟)  🔵 나머지 구  "
         "· 점 크기 = 월평균 이사 건수  "
         "· 우상단 = 이사 수요 많고 ROI 높음 → 광고 효율 최우선 구"
+    )
+    st.caption(
+        "ℹ️ **추정 ROI 공식**: 예산 × 3.0*(이사 트리거 효과) × (업종 전환율 ÷ 기준 1%) × 지역 이사 수요 가중치  "
+        "· 수요 가중치 = 해당 구 이사 건수 ÷ 최대 구 이사 건수 (서울 25구 상대값)  "
+        "· *이사가구 구매 가능성 3배 (Speedeon / Deluxe 벤치마크 기준)"
     )
 
 
@@ -236,19 +297,7 @@ def render_segment_roi(session) -> None:
     )
 
     # ── 상단 필터: 기준 연월 + 업종 + 예산 ──────────────────────────────────
-    _current_ym = datetime.date.today().strftime("%Y%m")
-
-    try:
-        months_df = session.sql(
-            """SELECT DISTINCT TO_CHAR(YEAR_MONTH, 'YYYYMM') AS YM
-               FROM MOVING_INTEL.ANALYTICS.V_TELECOM_NEW_INSTALL
-               ORDER BY 1 DESC LIMIT 24"""
-        ).to_pandas()
-        raw_opts = months_df["YM"].tolist() if not months_df.empty else ["202412"]
-        ym_options = [str(v) for v in raw_opts if str(v) <= _current_ym] or ["202412"]
-    except Exception:
-        ym_options = ["202504", "202503", "202502", "202501",
-                      "202412", "202411", "202410", "202409"]
+    ym_options = _load_ym_options(session)
 
     col_ym, col_ind, col_bud = st.columns([2, 3, 2])
     with col_ym:
@@ -290,10 +339,20 @@ def render_segment_roi(session) -> None:
     # ── 전체 순위 테이블 (접기) ───────────────────────────────────────────────
     with st.expander("25구 전체 기회 순위 보기"):
         display = opp_df[["구", "ml_rank", "avg_movers", "roi_pct", "opportunity"]].copy()
-        display.columns = ["구", "이사 수요 순위", "월평균 이사 (건)", "예상 ROI (%)", "기회 점수"]
+        display.columns = ["구", "이사 수요 순위", "월평균 이사 (건)", "추정 ROI (%)", "기회 점수"]
         display["이사 수요 순위"] = display["이사 수요 순위"].apply(lambda x: f"{x}위")
         display.index = range(1, len(display) + 1)
-        st.dataframe(display, use_container_width=True)
+        html = display.to_html(border=0, classes="roi-rank-table")
+        st.markdown(
+            f"""<style>
+.roi-rank-table {{ border-collapse:collapse; width:100%; font-size:14px; }}
+.roi-rank-table th, .roi-rank-table td {{ color:#000 !important; background:#fff !important;
+    padding:6px 10px; border-bottom:1px solid #ddd; text-align:right; }}
+.roi-rank-table th {{ background:#f5f5f5 !important; font-weight:600; }}
+.roi-rank-table td:first-child, .roi-rank-table th:first-child {{ text-align:left; }}
+</style><div style="overflow-x:auto">{html}</div>""",
+            unsafe_allow_html=True,
+        )
 
     st.divider()
 
@@ -364,12 +423,16 @@ def render_segment_roi(session) -> None:
                 tier_badge = "🟢 통합 데이터" if tier == "MULTI_SOURCE" else "🟡 통신 데이터"
                 st.caption(f"데이터 등급: {tier_badge}")
 
-                roi_pct = roi.get("roi_pct")
-                if roi_pct is not None:
-                    st.metric("예상 ROI", f"{float(roi_pct):.1f}%")
-                est_rev = roi.get("estimated_revenue")
-                if est_rev is not None:
-                    st.metric("예상 광고 유발 매출", _won(est_rev))
+                # overview와 동일한 공식 값 사용 (일관성 유지)
+                gu_row = opp_df[opp_df["구"] == selected_name]
+                if not gu_row.empty:
+                    _roi_pct = float(gu_row.iloc[0]["roi_pct"])
+                    _est_rev = float(gu_row.iloc[0]["est_rev"])
+                else:
+                    _roi_pct = float(roi.get("roi_pct") or 0)
+                    _est_rev = float(roi.get("estimated_revenue") or 0)
+                st.metric("추정 ROI", f"{_roi_pct:.1f}%")
+                st.metric("예상 광고 유발 매출", _won(_est_rev))
                 movers = roi.get("movers_reached")
                 if movers is not None:
                     st.metric("도달 이사가구", f"{int(float(movers)):,}가구")
@@ -379,6 +442,10 @@ def render_segment_roi(session) -> None:
                 avg_price = roi.get("avg_price_pyeong")
                 if avg_price is not None:
                     st.metric("지역 평균 평당 매매가", _pyeong_price(avg_price))
+                st.caption(
+                    "추정 ROI = 예산 × 3.0 × (업종전환율÷1%) × 지역수요지수  "
+                    "· 이사 트리거 효과 3배: Speedeon/Deluxe 벤치마크"
+                )
                 st.caption(
                     f"예산 {budget_만:,}만원 · CPC 500원 · "
                     "업종 전환율·LTV 적용 · 이사 수요 상한 반영"
@@ -462,10 +529,15 @@ def render_segment_roi(session) -> None:
             else:
                 st.caption("🟡 통신 데이터만 제공되는 지역")
                 tel = profile.get("telecom_summary", {})
-                c1, c2, c3 = st.columns(3)
-                c1.metric("신규계약", f"{float(tel.get('monthly_contract', 0)):,.0f}건")
-                c2.metric("신규개통", f"{float(tel.get('monthly_open', 0)):,.0f}건")
-                c3.metric("해지",     f"{float(tel.get('monthly_payend', 0)):,.0f}건")
+                contract = float(tel.get("monthly_contract", 0))
+                move_in  = float(tel.get("monthly_open", 0))
+                move_out = float(tel.get("monthly_payend", 0))
+                net      = move_in - move_out
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("신규 통신 계약", f"{contract:,.0f}건")
+                c2.metric("이사 유입",      f"{move_in:,.0f}건")
+                c3.metric("이사 유출",      f"{move_out:,.0f}건")
+                c4.metric("순 유입",        f"{net:+,.0f}건")
                 st.info(
                     "📌 중구·영등포구·서초구는 소득·소비·주거 데이터까지 포함된 "
                     "**통합 데이터** 분석이 가능합니다."
