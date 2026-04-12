@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Moving Intelligence — Architecture</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+  background: #f8f9fb;
+  display: flex; justify-content: center; align-items: center;
+  min-height: 100vh;
+}
+.page {
+  width: 1400px; height: 820px;
+  background: #fff; padding: 36px 50px 30px;
+  position: relative;
+}
+h1 { font-size: 26px; font-weight: 800; color: #1a1a2e; }
+.sub { font-size: 13px; color: #888; margin-bottom: 28px; }
+
+/* Snowflake wrapper */
+.sf-wrapper {
+  border: 2.5px solid #29b5e8; border-radius: 16px;
+  padding: 20px 28px 24px;
+  position: relative;
+  background: #fafcff;
+}
+.sf-badge {
+  position: absolute; top: -14px; left: 30px;
+  background: #29b5e8; color: #fff;
+  padding: 4px 18px; border-radius: 14px;
+  font-size: 12px; font-weight: 700; letter-spacing: 1px;
+}
+
+/* Horizontal flow */
+.flow {
+  display: flex; align-items: stretch; gap: 0;
+  min-height: 560px;
+}
+.col {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+
+/* Arrows */
+.arrow-r {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 0 8px; min-width: 60px;
+}
+.arrow-r .shaft { width: 28px; height: 2.5px; background: #cbd5e1; }
+.arrow-r .head {
+  width: 0; height: 0;
+  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
+  border-left: 9px solid #cbd5e1;
+}
+.arrow-r .alabel {
+  font-size: 9px; color: #29b5e8; font-weight: 700;
+  margin-top: 6px; text-align: center; line-height: 1.4;
+  background: #e0f2fe; padding: 2px 8px; border-radius: 8px;
+}
+
+/* Section header */
+.sec-hdr {
+  font-size: 10px; font-weight: 700; letter-spacing: 2px; color: #94a3b8;
+  margin-bottom: 10px; text-align: center;
+}
+
+/* ── 1. Marketplace ── */
+.mp-area { display: flex; flex-direction: column; gap: 8px; }
+.mp-card {
+  width: 155px; padding: 10px 12px;
+  border-radius: 8px; background: #fff;
+  border: 1.5px solid; text-align: center;
+}
+.mp-card .ic { font-size: 20px; }
+.mp-card .nm { font-size: 12px; font-weight: 700; margin: 2px 0; }
+.mp-card .ds { font-size: 9px; color: #666; line-height: 1.4; }
+.mp-card .cv {
+  font-size: 8px; font-weight: 600; margin-top: 4px;
+  padding: 1px 8px; border-radius: 8px; display: inline-block;
+}
+.c1 { border-color: #29b5e8; }
+.c1 .nm { color: #0c7499; }
+.c1 .cv { background: #e0f7fa; color: #00838f; }
+.c2 { border-color: #f59e0b; }
+.c2 .nm { color: #92400e; }
+.c2 .cv { background: #fff8e1; color: #e65100; }
+.c3 { border-color: #10b981; }
+.c3 .nm { color: #065f46; }
+.c3 .cv { background: #e8f5e9; color: #2e7d32; }
+.c4 { border-color: #94a3b8; }
+.c4 .nm { color: #475569; }
+.c4 .cv { background: #f1f5f9; color: #475569; }
+
+/* ── 2. MART ── */
+.mart-area { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.mart-box {
+  background: #1e293b; color: #fff; border-radius: 10px;
+  padding: 14px 18px; width: 200px; text-align: center;
+}
+.mart-box .t { font-size: 13px; font-weight: 800; }
+.mart-box .d { font-size: 9px; color: #94a3b8; margin-top: 3px; }
+.mart-box .tags { display: flex; gap: 5px; justify-content: center; margin-top: 8px; }
+.tag { font-size: 8px; padding: 2px 7px; border-radius: 6px; font-weight: 600; }
+.tag-m { background: #22c55e; color: #fff; }
+.tag-t { background: #f59e0b; color: #fff; }
+
+/* Dual track */
+.dual { display: flex; gap: 8px; }
+.trk {
+  width: 96px; padding: 10px 8px; border-radius: 8px;
+  text-align: center;
+}
+.trk-a { background: #fef3c7; border: 1.5px solid #f59e0b; }
+.trk-b { background: #d1fae5; border: 1.5px solid #10b981; }
+.trk .tl { font-size: 8px; font-weight: 700; letter-spacing: 1.5px; }
+.trk-a .tl { color: #92400e; }
+.trk-b .tl { color: #065f46; }
+.trk .tt { font-size: 15px; font-weight: 800; }
+.trk-a .tt { color: #78350f; }
+.trk-b .tt { color: #064e3b; }
+.trk .td { font-size: 8px; color: #666; margin-top: 2px; line-height: 1.4; }
+.trk .mape { font-size: 8px; font-weight: 700; margin-top: 4px; padding: 1px 6px; border-radius: 6px; display: inline-block; color: #fff; }
+.trk-a .mape { background: #f59e0b; }
+.trk-b .mape { background: #10b981; }
+
+/* UDF */
+.udf {
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  color: #fff; border-radius: 10px; padding: 12px 14px;
+  width: 200px; text-align: center;
+}
+.udf .t { font-size: 10px; font-weight: 700; font-family: Consolas, monospace; }
+.udf .d { font-size: 8px; color: #c4b5fd; margin-top: 3px; }
+
+/* ── 3. Output ── */
+.out-area { display: flex; flex-direction: column; gap: 12px; }
+.out-card {
+  width: 190px; padding: 12px 14px; border-radius: 10px;
+}
+.out-card .ot { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+.out-item { font-size: 9px; color: #444; padding: 3px 0; display: flex; align-items: center; gap: 5px; }
+.oi { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+
+.ctx { background: #f5f3ff; border: 1.5px solid #8b5cf6; }
+.ctx .ot { color: #5b21b6; }
+.ctx .oi { background: #8b5cf6; }
+
+.stl { background: #fdf2f8; border: 1.5px solid #ec4899; }
+.stl .ot { color: #be185d; }
+.stl .oi { background: #ec4899; }
+
+/* Snowflake feature labels */
+.sf-label {
+  position: absolute; font-size: 9px; font-weight: 700;
+  color: #fff; background: #29b5e8; padding: 2px 10px;
+  border-radius: 6px; white-space: nowrap;
+}
+
+/* Footer */
+.footer {
+  position: absolute; bottom: 20px; left: 50px; right: 50px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.f-badge {
+  background: #dc2626; color: #fff;
+  padding: 7px 22px; border-radius: 18px;
+  font-size: 12px; font-weight: 700;
+}
+.f-sf { font-size: 10px; color: #aaa; }
+
+/* Feature ribbon */
+.ribbon {
+  display: flex; gap: 8px; justify-content: center;
+  margin-top: 14px;
+}
+.ribbon-item {
+  background: #e0f2fe; border: 1px solid #29b5e8;
+  padding: 4px 12px; border-radius: 14px;
+  font-size: 10px; font-weight: 600; color: #0c7499;
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Architecture</h1>
+  <div class="sub">End-to-End Snowflake Native — 외부 서버 0, 데이터 이동 0</div>
+
+  <div class="sf-wrapper">
+    <div class="sf-badge">❄ ALL IN SNOWFLAKE</div>
+
+    <div class="flow">
+
+      <!-- 1. Marketplace -->
+      <div class="col">
+        <div class="sec-hdr">MARKETPLACE</div>
+        <div class="mp-area">
+          <div class="mp-card c1">
+            <div class="ic">📡</div>
+            <div class="nm">아정당</div>
+            <div class="ds">CONTRACT · OPEN · PAYEND</div>
+            <div class="cv">서울 25구</div>
+          </div>
+          <div class="mp-card c2">
+            <div class="ic">👥</div>
+            <div class="nm">SPH (3종)</div>
+            <div class="ds">유동인구 · 카드매출 · 소득자산</div>
+            <div class="cv">3구</div>
+          </div>
+          <div class="mp-card c3">
+            <div class="ic">🏠</div>
+            <div class="nm">RICHGO</div>
+            <div class="ds">매매가 · 전세가</div>
+            <div class="cv">3구 29동</div>
+          </div>
+          <div class="mp-card c4">
+            <div class="ic">🗺</div>
+            <div class="nm">BJD 마스터</div>
+            <div class="ds">동↔구 코드 매핑</div>
+            <div class="cv">465동</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Arrow 1 -->
+      <div class="arrow-r">
+        <div style="display:flex;align-items:center"><div class="shaft"></div><div class="head"></div></div>
+        <div class="alabel">참조 뷰<br>ETL 0</div>
+      </div>
+
+      <!-- 2. Snowpark + MART + Track + UDF -->
+      <div class="col">
+        <div class="sec-hdr">ML PIPELINE</div>
+        <div class="mart-area">
+
+          <div style="font-size:10px;color:#29b5e8;font-weight:700;background:#e0f2fe;padding:3px 12px;border-radius:8px;margin-bottom:2px;">
+            ❄ Snowpark Python
+          </div>
+
+          <div class="mart-box">
+            <div class="t">MART_MOVE_ANALYSIS</div>
+            <div class="d">850행 통합 마트</div>
+            <div class="tags">
+              <div class="tag tag-m">MULTI_SOURCE 3구</div>
+              <div class="tag tag-t">TELECOM_ONLY 22구</div>
+            </div>
+          </div>
+
+          <div style="font-size:9px;color:#94a3b8;margin:2px 0;">▼ DATA_TIER 분기</div>
+
+          <div class="dual">
+            <div class="trk trk-a">
+              <div class="tl">TRACK A</div>
+              <div class="tt">25구</div>
+              <div class="td">경량 예측<br>"어디에 몰리나"</div>
+              <div class="mape">&lt;25%</div>
+            </div>
+            <div class="trk trk-b">
+              <div class="tl">TRACK B</div>
+              <div class="tt">3구</div>
+              <div class="td">정밀 예측<br>"얼마나 투자할지"</div>
+              <div class="mape">&lt;20%</div>
+            </div>
+          </div>
+
+          <div style="font-size:9px;color:#94a3b8;margin:2px 0;">▼</div>
+
+          <div style="font-size:10px;color:#29b5e8;font-weight:700;background:#e0f2fe;padding:3px 12px;border-radius:8px;margin-bottom:2px;">
+            ❄ Snowpark ML + Model Registry
+          </div>
+
+          <div class="udf">
+            <div class="t">PREDICT_MOVE_DEMAND</div>
+            <div class="d">❄ SQL UDF · 자동 분기</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Arrow 2 -->
+      <div class="arrow-r">
+        <div style="display:flex;align-items:center"><div class="shaft"></div><div class="head"></div></div>
+      </div>
+
+      <!-- 3. Cortex + Streamlit -->
+      <div class="col">
+        <div class="sec-hdr">AI + DASHBOARD</div>
+        <div class="out-area">
+          <div style="font-size:10px;color:#29b5e8;font-weight:700;background:#e0f2fe;padding:3px 12px;border-radius:8px;text-align:center;">
+            ❄ Cortex AI (4종)
+          </div>
+          <div class="out-card ctx">
+            <div class="ot">🧠 Cortex AI</div>
+            <div class="out-item"><div class="oi"></div>AI_COMPLETE — B2B 인사이트 생성</div>
+            <div class="out-item"><div class="oi"></div>AI_CLASSIFY — 수요 등급 분류</div>
+            <div class="out-item"><div class="oi"></div>Cortex Analyst — 자연어 SQL 질의</div>
+            <div class="out-item"><div class="oi"></div>AI_EMBED — 유사 구 벡터 검색</div>
+          </div>
+
+          <div style="font-size:10px;color:#29b5e8;font-weight:700;background:#e0f2fe;padding:3px 12px;border-radius:8px;text-align:center;">
+            ❄ Streamlit in Snowflake
+          </div>
+          <div class="out-card stl">
+            <div class="ot">📊 대시보드 (3탭)</div>
+            <div class="out-item"><div class="oi"></div>이사 수요 히트맵 — 25구 지도</div>
+            <div class="out-item"><div class="oi"></div>세그먼트 · ROI — 프로파일 + 시뮬레이션</div>
+            <div class="out-item"><div class="oi"></div>Cortex AI 분석 — 자연어 질의</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Snowflake Feature Ribbon -->
+    <div class="ribbon">
+      <div class="ribbon-item">❄ Marketplace 4종</div>
+      <div class="ribbon-item">❄ Snowpark Python</div>
+      <div class="ribbon-item">❄ Snowpark ML + Registry</div>
+      <div class="ribbon-item">❄ SQL UDF</div>
+      <div class="ribbon-item">❄ Cortex AI 4종</div>
+      <div class="ribbon-item">❄ Streamlit in Snowflake</div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="f-badge">외부 서버 0 · 데이터 이동 0 · Snowflake 단일 계정 완결</div>
+    <div class="f-sf">❄ Snowflake AI & Data Hackathon 2026 Korea — Tech Track</div>
+  </div>
+</div>
+</body>
+</html>
