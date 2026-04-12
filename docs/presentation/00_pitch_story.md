@@ -262,6 +262,7 @@ D+14 ~ D+45   [KOSIS 월간 집계]     ── 1~2개월 후
   KOSIS 전입신고보다 D+14~D+45 더 정확한 이사 시점
 ```
 
+
 **왜 KOSIS가 아닌 OPEN인가?**
 
 | 기준 | OPEN_COUNT | KOSIS 전입신고 |
